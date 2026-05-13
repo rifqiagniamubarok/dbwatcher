@@ -42,7 +42,7 @@ func New(dbURL, publication, slot string, out chan<- store.Event) *Listener {
 func (l *Listener) Start(ctx context.Context) error {
 	conn, err := pgconn.Connect(ctx, l.dbURL)
 	if err != nil {
-		return fmt.Errorf("connect to postgres: %w", err)
+		return friendlyError(err)
 	}
 	defer conn.Close(context.Background())
 
@@ -50,13 +50,13 @@ func (l *Listener) Start(ctx context.Context) error {
 
 	// Ensure publication exists.
 	if err := l.ensurePublication(ctx, conn); err != nil {
-		return err
+		return friendlyError(err)
 	}
 
 	// Create a temporary replication slot (auto-dropped on disconnect).
 	slotLSN, err := l.createSlot(ctx, conn)
 	if err != nil {
-		return err
+		return friendlyError(err)
 	}
 
 	slog.Info("replication slot ready", "slot", l.slot, "lsn", slotLSN)
@@ -69,7 +69,7 @@ func (l *Listener) Start(ctx context.Context) error {
 		},
 	}
 	if err := pglogrepl.StartReplication(ctx, conn, l.slot, slotLSN, opts); err != nil {
-		return fmt.Errorf("start replication: %w", err)
+		return friendlyError(err)
 	}
 
 	slog.Info("replication started", "lsn", slotLSN)
@@ -209,7 +209,7 @@ func (l *Listener) readLoop(
 			}
 
 		case *pgproto3.ErrorResponse:
-			return fmt.Errorf("postgres error: %s", msg.Message)
+			return friendlyError(fmt.Errorf("%s", msg.Message))
 		}
 	}
 }

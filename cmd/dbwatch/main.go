@@ -19,7 +19,12 @@ import (
 	"github.com/rifqiagniamubarok/dbwatcher/internal/tui"
 )
 
-const version = "0.0.0-dev"
+// Set via -ldflags at build time.
+var (
+	version   = "0.0.0-dev"
+	commit    = "none"
+	buildDate = "unknown"
+)
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -207,7 +212,7 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println(version)
+			fmt.Printf("dbwatch %s (commit %s, built %s)\n", version, commit, buildDate)
 		},
 	}
 }
