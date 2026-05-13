@@ -3,8 +3,8 @@ set -euo pipefail
 
 CONTAINER=dbwatch-test-pg
 IMAGE=postgres:16
-PORT=5432
-DB_URL="postgres://test:test@localhost:${PORT}/test"
+PORT=5433
+DB_URL="postgres://test:test@localhost:${PORT}/test?sslmode=disable"
 
 echo "==> Stopping existing container (if any)..."
 docker rm -f "$CONTAINER" 2>/dev/null || true
@@ -37,3 +37,6 @@ docker exec -i "$CONTAINER" psql -U test -d test < "$(dirname "$0")/seed.sql"
 echo ""
 echo "Test database ready."
 echo "Connection string: $DB_URL"
+echo ""
+echo "Run dbwatch:"
+echo "  ./bin/dbwatch tail --db-url=\"${DB_URL}&replication=database\""
