@@ -9,11 +9,14 @@ import (
 	"syscall"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/rifqiagniamubarok/dbwatcher/internal/config"
 	"github.com/rifqiagniamubarok/dbwatcher/internal/listener"
 	"github.com/rifqiagniamubarok/dbwatcher/internal/store"
+	"github.com/rifqiagniamubarok/dbwatcher/internal/tui"
 )
 
 const version = "0.0.0-dev"
@@ -46,6 +49,7 @@ func tailCmd() *cobra.Command {
 	cmd.Flags().String("slot", config.DefaultSlot, "Replication slot name")
 	cmd.Flags().String("log-level", config.DefaultLogLevel, "Log level: debug, info, warn, error")
 	cmd.Flags().Int("buffer", config.DefaultBufferSize, "Event ring buffer size")
+	cmd.Flags().String("output", "auto", "Output mode: auto, tui, json")
 
 	return cmd
 }
@@ -58,6 +62,9 @@ func runTail(cmd *cobra.Command, args []string) error {
 
 	setupLogger(cfg.LogLevel)
 
+	outputMode, _ := cmd.Flags().GetString("output")
+	useTUI := shouldUseTUI(outputMode)
+
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -66,7 +73,6 @@ func runTail(cmd *cobra.Command, args []string) error {
 	listenerIn := make(chan store.Event, cfg.BufferSize)
 	l := listener.New(cfg.DBURL, cfg.Publication, cfg.Slot, listenerIn)
 
-	// Forward listener output into the Store.
 	go func() {
 		for e := range listenerIn {
 			st.Push(e)
@@ -78,7 +84,53 @@ func runTail(cmd *cobra.Command, args []string) error {
 		listenerErr <- l.Start(ctx)
 	}()
 
-	// Print periodic stats to stderr.
+	if useTUI {
+		return runTUIMode(ctx, stop, cfg, st, listenerErr)
+	}
+	return runJSONMode(ctx, st, listenerErr)
+}
+
+func runTUIMode(ctx interface{ Done() <-chan struct{} }, stop func(), cfg *config.Config, st *store.Store, listenerErr <-chan error) error {
+	model := tui.New(cfg.DBURL)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	sub := st.Subscribe()
+
+	// Forward store events into the Bubble Tea program.
+	go func() {
+		for {
+			select {
+			case e, ok := <-sub:
+				if !ok {
+					return
+				}
+				p.Send(tui.EventMsg(e))
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Quit program when listener errors out.
+	go func() {
+		select {
+		case err := <-listenerErr:
+			if err != nil {
+				p.Send(tea.QuitMsg{})
+				fmt.Fprintf(os.Stderr, "\nlistener error: %v\n", err)
+			}
+		case <-ctx.Done():
+			p.Send(tea.QuitMsg{})
+		}
+	}()
+
+	_, err := p.Run()
+	st.Unsubscribe(sub)
+	stop()
+	return err
+}
+
+func runJSONMode(ctx interface{ Done() <-chan struct{} }, st *store.Store, listenerErr <-chan error) error {
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
@@ -86,7 +138,7 @@ func runTail(cmd *cobra.Command, args []string) error {
 			select {
 			case <-ticker.C:
 				s := st.Stats()
-				fmt.Fprintf(os.Stderr, "[stats] received=%d buffered=%d subscribers=1\n", s.Total, s.Buffered)
+				fmt.Fprintf(os.Stderr, "[stats] received=%d buffered=%d\n", s.Total, s.Buffered)
 			case <-ctx.Done():
 				return
 			}
@@ -116,11 +168,22 @@ func runTail(cmd *cobra.Command, args []string) error {
 			return nil
 
 		case <-ctx.Done():
-			if err := <-listenerErr; err != nil && ctx.Err() == nil {
+			if err := <-listenerErr; err != nil {
 				return fmt.Errorf("listener: %w", err)
 			}
 			return nil
 		}
+	}
+}
+
+func shouldUseTUI(mode string) bool {
+	switch mode {
+	case "tui":
+		return true
+	case "json":
+		return false
+	default: // "auto"
+		return isatty.IsTerminal(os.Stdout.Fd())
 	}
 }
 
