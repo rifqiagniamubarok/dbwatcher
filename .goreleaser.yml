@@ -1,0 +1,76 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: dbwatch
+    main: ./cmd/dbwatch
+    binary: dbwatch
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.buildDate={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^chore:"
+      - "^docs:"
+      - Merge pull request
+      - Merge branch
+
+dockers:
+  - image_templates:
+      - "ghcr.io/rifqiagniamubarok/dbwatcher:{{ .Tag }}-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+  - image_templates:
+      - "ghcr.io/rifqiagniamubarok/dbwatcher:{{ .Tag }}-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+
+docker_manifests:
+  - name_template: "ghcr.io/rifqiagniamubarok/dbwatcher:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/rifqiagniamubarok/dbwatcher:{{ .Tag }}-amd64"
+      - "ghcr.io/rifqiagniamubarok/dbwatcher:{{ .Tag }}-arm64"
+  - name_template: "ghcr.io/rifqiagniamubarok/dbwatcher:latest"
+    image_templates:
+      - "ghcr.io/rifqiagniamubarok/dbwatcher:{{ .Tag }}-amd64"
+      - "ghcr.io/rifqiagniamubarok/dbwatcher:{{ .Tag }}-arm64"
