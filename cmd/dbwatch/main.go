@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -60,18 +61,44 @@ func runTail(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	events := make(chan store.Event, cfg.BufferSize)
+	st := store.New(cfg.BufferSize)
 
-	l := listener.New(cfg.DBURL, cfg.Publication, cfg.Slot, events)
+	listenerIn := make(chan store.Event, cfg.BufferSize)
+	l := listener.New(cfg.DBURL, cfg.Publication, cfg.Slot, listenerIn)
+
+	// Forward listener output into the Store.
+	go func() {
+		for e := range listenerIn {
+			st.Push(e)
+		}
+	}()
 
 	listenerErr := make(chan error, 1)
 	go func() {
 		listenerErr <- l.Start(ctx)
 	}()
 
+	// Print periodic stats to stderr.
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				s := st.Stats()
+				fmt.Fprintf(os.Stderr, "[stats] received=%d buffered=%d subscribers=1\n", s.Total, s.Buffered)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	sub := st.Subscribe()
+	defer st.Unsubscribe(sub)
+
 	for {
 		select {
-		case e, ok := <-events:
+		case e, ok := <-sub:
 			if !ok {
 				return nil
 			}
@@ -89,7 +116,6 @@ func runTail(cmd *cobra.Command, args []string) error {
 			return nil
 
 		case <-ctx.Done():
-			// Wait for listener to stop.
 			if err := <-listenerErr; err != nil && ctx.Err() == nil {
 				return fmt.Errorf("listener: %w", err)
 			}
