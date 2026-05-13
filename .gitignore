@@ -1,4 +1,5 @@
 /bin/
+/dbwatch
 *.test
 coverage.out
 .env
