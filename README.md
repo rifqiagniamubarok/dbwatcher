@@ -31,18 +31,40 @@ When you're debugging code that touches Postgres, DBWatch shows you exactly what
 ```bash
 # 1. Start Postgres with logical replication enabled
 docker run -d --name pg-dev \
-  -e POSTGRES_PASSWORD=dev \
+  -e POSTGRES_USER=local \
+  -e POSTGRES_PASSWORD=local \
+  -e POSTGRES_DB=test \
   -p 5432:5432 \
   postgres:16 -c wal_level=logical
 
-# 2. Install and run DBWatch
-go install github.com/rifqiagniamubarok/dbwatcher/cmd/dbwatch@latest
-dbwatch tail --db-url="postgres://postgres:dev@localhost:5432/postgres?sslmode=disable&replication=database"
+# 2. Grant REPLICATION privilege to the user (one-time setup)
+docker exec -i pg-dev psql -U local -d test -c "ALTER USER local REPLICATION;"
 
-# 3. In another terminal, make changes — watch them appear live
-psql "postgres://postgres:dev@localhost:5432/postgres?sslmode=disable" \
+# 3. Install and run DBWatch
+go install github.com/rifqiagniamubarok/dbwatcher/cmd/dbwatch@latest
+dbwatch tail --db-url="postgres://local:local@localhost:5432/test?sslmode=disable&replication=database"
+
+# 4. In another terminal, make changes — watch them appear live
+psql "postgres://local:local@localhost:5432/test?sslmode=disable" \
+  -c "CREATE TABLE IF NOT EXISTS users (id int PRIMARY KEY, name text);" \
   -c "INSERT INTO users VALUES (1, 'alice');"
 ```
+
+### Adapting the connection URL
+
+The URL shape is:
+
+```text
+postgres://<user>:<password>@<host>:<port>/<database>?sslmode=disable&replication=database
+```
+
+Rename the four placeholders to match your setup. For the values used in Quick Start (`user=local`, `password=local`, `host=localhost`, `port=5432`, `database=test`) the full URL is:
+
+```text
+postgres://local:local@localhost:5432/test?sslmode=disable&replication=database
+```
+
+`sslmode=disable` is for local Postgres without TLS — drop it (or change it) for managed databases. `replication=database` is **required** for logical replication; do not omit it.
 
 ## Installation
 
