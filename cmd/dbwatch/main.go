@@ -26,6 +26,7 @@ import (
 	"github.com/rifqiagniamubarok/dbwatcher/internal/core"
 	"github.com/rifqiagniamubarok/dbwatcher/internal/daemon"
 	"github.com/rifqiagniamubarok/dbwatcher/internal/ipc"
+	"github.com/rifqiagniamubarok/dbwatcher/internal/markerapi"
 	"github.com/rifqiagniamubarok/dbwatcher/internal/store"
 	"github.com/rifqiagniamubarok/dbwatcher/internal/tui"
 )
@@ -40,6 +41,9 @@ var (
 const (
 	flagName        = "name"
 	flagDaemonChild = "daemon-child"
+	flagMarkerPort  = "marker-port"
+	flagMarkerBind  = "marker-bind"
+	flagNoMarker    = "no-marker"
 	daemonNameDesc  = "Daemon name"
 )
 
@@ -74,8 +78,43 @@ func tailCmd() *cobra.Command {
 	cmd.Flags().String("log-level", config.DefaultLogLevel, "Log level: debug, info, warn, error")
 	cmd.Flags().Int("buffer", config.DefaultBufferSize, "Event ring buffer size")
 	cmd.Flags().String("output", "auto", "Output mode: auto, tui, json")
+	addMarkerFlags(cmd)
 
 	return cmd
+}
+
+// addMarkerFlags registers the marker HTTP API flags on cmd.
+// Shared by `tail` and `daemon start`.
+func addMarkerFlags(cmd *cobra.Command) {
+	cmd.Flags().Int(flagMarkerPort, markerapi.DefaultPort, "Marker HTTP API port (set 0 for ephemeral)")
+	cmd.Flags().String(flagMarkerBind, markerapi.DefaultBind, "Marker HTTP API bind address")
+	cmd.Flags().Bool(flagNoMarker, false, "Disable the marker HTTP API")
+}
+
+// startMarkerAPI starts the marker HTTP server in a goroutine, unless
+// --no-marker is set. It returns a channel that emits the server's exit
+// error (so the caller can react to a port conflict) and a boolean
+// indicating whether the server was actually started.
+func startMarkerAPI(ctx context.Context, cmd *cobra.Command, st *store.Store, startedAt time.Time) (<-chan error, bool) {
+	noMarker, _ := cmd.Flags().GetBool(flagNoMarker)
+	if noMarker {
+		return nil, false
+	}
+	port, _ := cmd.Flags().GetInt(flagMarkerPort)
+	bind, _ := cmd.Flags().GetString(flagMarkerBind)
+
+	server := markerapi.New(markerapi.Options{
+		Bind:    bind,
+		Port:    port,
+		Store:   st,
+		StartAt: startedAt,
+		Version: version,
+	})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe(ctx)
+	}()
+	return errCh, true
 }
 
 func runTail(cmd *cobra.Command, args []string) error {
@@ -100,6 +139,16 @@ func runTail(cmd *cobra.Command, args []string) error {
 		sourceErr <- core.Run(ctx, cfg, st, func(e store.Event) {
 			lastLSN.Store(e.LSN)
 		})
+	}()
+
+	markerErr, _ := startMarkerAPI(ctx, cmd, st, time.Now())
+	go func() {
+		if markerErr == nil {
+			return
+		}
+		if err := <-markerErr; err != nil {
+			fmt.Fprintf(os.Stderr, "marker api: %v\n", err)
+		}
 	}()
 
 	if useTUI {
@@ -321,6 +370,7 @@ func daemonStartCmd() *cobra.Command {
 	cmd.Flags().Bool("detach", false, "Run daemon in background")
 	cmd.Flags().Bool(flagDaemonChild, false, "Internal: daemon detached child process")
 	_ = cmd.Flags().MarkHidden(flagDaemonChild)
+	addMarkerFlags(cmd)
 
 	return cmd
 }
@@ -345,10 +395,10 @@ func runDaemonStart(cmd *cobra.Command, args []string) error {
 	}
 
 	if detach && !isChild {
-		return runDaemonDetached(name, cfg, pidPath, socketPath, logPath)
+		return runDaemonDetached(cmd, name, cfg, pidPath, socketPath, logPath)
 	}
 
-	return runDaemonForeground(cmd.Context(), cfg, name, pidPath, socketPath, isChild)
+	return runDaemonForeground(cmd, cfg, name, pidPath, socketPath, isChild)
 }
 
 func resolveDaemonPaths(name string) (socketPath, pidPath, logPath string, err error) {
@@ -381,11 +431,11 @@ func prepareDaemonStart(pidPath, socketPath, name string) error {
 	return nil
 }
 
-func runDaemonDetached(name string, cfg *config.Config, pidPath, socketPath, logPath string) error {
+func runDaemonDetached(cmd *cobra.Command, name string, cfg *config.Config, pidPath, socketPath, logPath string) error {
 	if err := daemon.TruncateIfLarge(logPath, 10*1024*1024); err != nil {
 		return fmt.Errorf("prepare daemon log file: %w", err)
 	}
-	childPID, err := startDetachedDaemon(name, cfg, logPath)
+	childPID, err := startDetachedDaemon(cmd, name, cfg, logPath)
 	if err != nil {
 		return err
 	}
@@ -397,10 +447,10 @@ func runDaemonDetached(name string, cfg *config.Config, pidPath, socketPath, log
 	return nil
 }
 
-func runDaemonForeground(parentCtx context.Context, cfg *config.Config, name, pidPath, socketPath string, isChild bool) error {
+func runDaemonForeground(cmd *cobra.Command, cfg *config.Config, name, pidPath, socketPath string, isChild bool) error {
 	setupLogger(cfg.LogLevel)
 
-	ctx, stop := signal.NotifyContext(parentCtx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if err := daemon.WritePIDFile(pidPath, os.Getpid()); err != nil {
@@ -453,8 +503,15 @@ func runDaemonForeground(parentCtx context.Context, cfg *config.Config, name, pi
 		ipcErr <- server.ListenAndServe(ctx)
 	}()
 
+	markerErr, markerOn := startMarkerAPI(ctx, cmd, st, startedAt)
+
 	if !isChild {
 		fmt.Printf("daemon %q started (pid %d, socket %s)\n", name, os.Getpid(), socketPath)
+		if markerOn {
+			markerPort, _ := cmd.Flags().GetInt(flagMarkerPort)
+			markerBind, _ := cmd.Flags().GetString(flagMarkerBind)
+			fmt.Printf("marker api listening on %s:%d\n", markerBind, markerPort)
+		}
 	}
 
 	for {
@@ -465,6 +522,10 @@ func runDaemonForeground(parentCtx context.Context, cfg *config.Config, name, pi
 			return wrapNamedError("listener", err)
 		case err := <-ipcErr:
 			return wrapNamedError("ipc server", err)
+		case err := <-markerErr:
+			if err != nil {
+				return wrapNamedError("marker api", err)
+			}
 		}
 	}
 }
@@ -658,7 +719,7 @@ func daemonStatus(name string) (string, error) {
 	return fmt.Sprintf("running   %d   %s   %d   %d", pid, formatUptime(stats.UptimeSeconds), stats.Received, stats.Clients), nil
 }
 
-func startDetachedDaemon(name string, cfg *config.Config, logPath string) (int, error) {
+func startDetachedDaemon(cmd *cobra.Command, name string, cfg *config.Config, logPath string) (int, error) {
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return 0, fmt.Errorf("open daemon log file: %w", err)
@@ -673,6 +734,19 @@ func startDetachedDaemon(name string, cfg *config.Config, logPath string) (int, 
 		"--slot", cfg.Slot,
 		"--log-level", cfg.LogLevel,
 		"--buffer", strconv.Itoa(cfg.BufferSize),
+	}
+
+	// Forward marker flags so the detached child binds the same port/bind
+	// and respects --no-marker.
+	if noMarker, _ := cmd.Flags().GetBool(flagNoMarker); noMarker {
+		args = append(args, "--"+flagNoMarker)
+	} else {
+		port, _ := cmd.Flags().GetInt(flagMarkerPort)
+		bind, _ := cmd.Flags().GetString(flagMarkerBind)
+		args = append(args,
+			"--"+flagMarkerPort, strconv.Itoa(port),
+			"--"+flagMarkerBind, bind,
+		)
 	}
 
 	child := exec.Command(os.Args[0], args...)

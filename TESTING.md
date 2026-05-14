@@ -131,6 +131,25 @@ Run the scenarios below after each phase is complete. Tick `[x]` once verified.
 - [ ] Killing the daemon with SIGKILL leaves a stale socket; the next `daemon start` reports it clearly
 - [ ] `dbwatch tail` (foreground all-in-one) still behaves exactly as before — no regression
 
+### Phase 6 — Marker HTTP API
+
+- [ ] `curl http://localhost:6677/health` returns 200 with `status:"ok"` while a daemon or tail is running
+- [ ] `curl -X POST localhost:6677/marker -d "TEST"` produces a separator line in the TUI feed (default color)
+- [ ] `curl -X POST -H "Content-Type: application/json" localhost:6677/marker -d '{"label":"x","color":"yellow"}'` produces a yellow separator
+- [ ] `curl -X POST localhost:6677/log -d "starting suite"` produces an inline `[log]` line (no separator)
+- [ ] Invalid color (`{"color":"purple"}`) returns 400 with an actionable error
+- [ ] Empty label returns 400; nothing is pushed to the feed
+- [ ] Marker server is bound to `127.0.0.1`, not reachable from another host on the LAN
+- [ ] `--no-marker` disables the server; nothing listens on `6677`
+- [ ] Custom `--marker-port=N` binds to N and is reachable
+- [ ] `dbwatch daemon start --detach` propagates `--marker-port` / `--marker-bind` / `--no-marker` to the child
+- [ ] In the TUI, `[` and `]` jump the cursor between markers
+- [ ] In the TUI, `M` clears every item before the most recent marker
+- [ ] Marker / log items pass through the table filter (never hidden even when their "table" filter would not match)
+- [ ] Marker / log items don't appear in the sidebar table list
+- [ ] Marker server runs in `dbwatch tail` mode too (no daemon required)
+- [ ] A test runner that POSTs to a stopped DBWatch fails silently (the curl connect error doesn't break the suite)
+
 ## Verified scenarios log
 
 Record the date and environment when manual tests pass. Format:
