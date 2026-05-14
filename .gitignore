@@ -15,7 +15,7 @@ coverage.out
 .env
 .env.*
 
-# macOS
+# OS
 .DS_Store
 
 # IDE
