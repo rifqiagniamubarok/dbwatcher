@@ -1,14 +1,15 @@
 package daemon
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
-	"time"
 )
+
+// WritePIDFile, ReadPIDFile, and TruncateIfLarge are portable. Process
+// inspection and stopping (IsProcessRunning, StopProcess) live in
+// lifecycle_unix.go and lifecycle_windows.go because they need POSIX signals.
 
 func WritePIDFile(path string, pid int) error {
 	return os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0o600)
@@ -24,39 +25,6 @@ func ReadPIDFile(path string) (int, error) {
 		return 0, fmt.Errorf("invalid pid file %q: %w", path, err)
 	}
 	return pid, nil
-}
-
-func IsProcessRunning(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
-func StopProcess(pid int, timeout time.Duration) error {
-	if pid <= 0 {
-		return fmt.Errorf("invalid pid")
-	}
-	if !IsProcessRunning(pid) {
-		return nil
-	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return fmt.Errorf("send SIGTERM: %w", err)
-	}
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if !IsProcessRunning(pid) {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return fmt.Errorf("send SIGKILL: %w", err)
-	}
-	return nil
 }
 
 func TruncateIfLarge(path string, maxBytes int64) error {

@@ -17,10 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Service templates:** `docs/dbwatch.service` (systemd) and `docs/dbwatch.plist` (launchd).
 - **Configuration:** `DBWATCH_SOCKET_DIR` env var to override the runtime directory; `--name` flag for multi-daemon hosts; `--follow` for `daemon logs`; local-only `--buffer` for `attach`.
 
+### Fixed
+
+- **IPC idle clients are now reaped.** The server applies a 60s read deadline that resets on every inbound `ping` / `subscribe`. Hung clients no longer occupy a Store subscription indefinitely.
+- **IPC client drops are observable.** When a slow `attach` consumer overflows the local 100-event channel, the client now records the count (exposed via `Client.Dropped()`) and emits a `Debug` log instead of silently swallowing the event.
+- **Windows cross-compilation.** `internal/daemon/` and `cmd/dbwatch/` split POSIX-specific bits (`syscall.Kill`, `Setsid`) into `_unix.go` files; Windows stubs return `daemon.ErrUnsupportedPlatform`. `go build` and `go vet` now succeed for `GOOS=windows`; the binary still refuses `daemon start --detach` on Windows with a clear message.
+
 ### Known limitations
 
-- Daemon lifecycle uses POSIX signals; `daemon start/stop` is Linux/macOS only. Windows users should keep using `dbwatch tail`.
-- The IPC `subscribe` envelope is a protocol placeholder — every attached client currently receives all events. Per-client table filtering will come later.
+- Daemon process management (`daemon start --detach`, `daemon stop`) is Linux/macOS only. Windows builds compile cleanly but the daemon subcommands return `ErrUnsupportedPlatform`; use `dbwatch tail` on Windows.
+- The IPC `subscribe` envelope is a protocol placeholder — every attached client currently receives all events. Per-client table filtering will come later. The server now logs at Debug level when it ignores a subscribe filter.
 
 ### Planned
 

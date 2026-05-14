@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/rifqiagniamubarok/dbwatcher/internal/store"
 )
+
+// clientIdleTimeout is how long the server waits for any inbound message
+// (a ping or subscribe) before assuming the client is dead. Clients should
+// ping well within this window — the plan calls for pings every 15s.
+const clientIdleTimeout = 60 * time.Second
 
 type ServerOptions struct {
 	SocketPath string
@@ -148,6 +154,11 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 	}()
 
+	// Apply an initial read deadline; refreshed on every inbound message.
+	// If the client goes silent for clientIdleTimeout the Decode call below
+	// returns an error and the handler exits, freeing the subscription.
+	_ = conn.SetReadDeadline(time.Now().Add(clientIdleTimeout))
+
 	for {
 		select {
 		case <-stopPump:
@@ -157,8 +168,12 @@ func (s *Server) handleConn(conn net.Conn) {
 
 		var env Envelope
 		if err := dec.Decode(&env); err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				slog.Debug("ipc client idle timeout, closing connection")
+			}
 			return
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(clientIdleTimeout))
 
 		switch env.Type {
 		case TypePing:
@@ -166,7 +181,10 @@ func (s *Server) handleConn(conn net.Conn) {
 				return
 			}
 		case TypeSubscribe:
-			// Protocol placeholder: table-filtered subscriptions can be added later.
+			// Protocol placeholder: per-client table filters are not yet honored.
+			// Every client receives all events via the AllowAllFilter subscribed
+			// above. See ARCHITECTURE.md "IPC layer" and CHANGELOG.md limitations.
+			slog.Debug("ipc subscribe envelope received; filter ignored (placeholder)")
 			if err := send(Envelope{Type: TypePong}); err != nil {
 				return
 			}

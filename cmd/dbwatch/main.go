@@ -680,7 +680,10 @@ func startDetachedDaemon(name string, cfg *config.Config, logPath string) (int, 
 	child.Stderr = logFile
 	child.Stdin = nil
 	child.Dir = currentWorkingDir()
-	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := applyDetachAttrs(child); err != nil {
+		_ = logFile.Close()
+		return 0, err
+	}
 
 	if err := child.Start(); err != nil {
 		_ = logFile.Close()

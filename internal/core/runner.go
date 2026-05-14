@@ -10,6 +10,12 @@ import (
 
 // Run starts the listener and forwards decoded events into the provided store.
 // It blocks until the listener exits or context is cancelled.
+//
+// onEvent (optional) is invoked synchronously on the forwarder goroutine after
+// each successful Store.Push. Keep it fast and non-blocking — anything slow
+// here back-pressures the entire Listener→Store pipeline. The tail command
+// uses this to emit JSON to stdout; daemon mode passes nil and lets clients
+// subscribe to the Store directly.
 func Run(ctx context.Context, cfg *config.Config, st *store.Store, onEvent func(store.Event)) error {
 	listenerIn := make(chan store.Event, cfg.BufferSize)
 	l := listener.New(cfg.DBURL, cfg.Publication, cfg.Slot, listenerIn)

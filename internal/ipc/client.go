@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rifqiagniamubarok/dbwatcher/internal/store"
@@ -25,6 +27,14 @@ type Client struct {
 	events   chan store.Event
 	stats    chan StatsData
 	errs     chan error
+
+	dropped atomic.Uint64
+}
+
+// Dropped returns the number of events that were dropped because the client's
+// internal events channel was full (slow consumer). Useful for diagnostics.
+func (c *Client) Dropped() uint64 {
+	return c.dropped.Load()
 }
 
 func Dial(ctx context.Context, socketPath string) (*Client, error) {
@@ -103,7 +113,15 @@ func (c *Client) readLoop() {
 			select {
 			case c.events <- e:
 			default:
-				// Keep the stream non-blocking for slow consumers.
+				// Slow consumer — drop this event for this client. The daemon
+				// keeps the canonical buffer; reattaching will resync via the
+				// snapshot. We track the count for diagnostics rather than
+				// silently swallowing.
+				n := c.dropped.Add(1)
+				if n == 1 || n%100 == 0 {
+					slog.Debug("ipc client dropped event (slow consumer)",
+						"event_id", e.ID, "table", e.Table, "dropped_total", n)
+				}
 			}
 		case TypeStats:
 			var s StatsData
