@@ -1,81 +1,81 @@
 # Contributing to DBWatch
 
-Panduan kerja internal untuk development DBWatch. Baca ini sebelum mulai coding.
+Internal development guide. Read this before writing any code.
 
 ---
 
 ## Branch strategy
 
 ```
-main         ← production-ready, protected. Hanya menerima merge dari release/*
-development  ← integrasi semua fitur. Base branch untuk semua feature branch
-feature/*    ← satu branch per fitur / task
-fix/*        ← untuk bug fix
-release/*    ← persiapan release (bump version, update CHANGELOG)
+main         ← production-ready, protected. Only accepts merges from release/*
+development  ← integration branch. Base for all feature branches
+feature/*    ← one branch per feature or task
+fix/*        ← bug fixes
+release/*    ← release preparation (version bump, CHANGELOG update)
 ```
 
-### Alur kerja
+### Workflow
 
 ```
 feature/your-feature
         ↓  PR
    development
-        ↓  PR (setelah semua fitur siap)
+        ↓  PR (once all features are ready)
   release/v0.x.x
         ↓  PR
-        main  ← tag di sini → GitHub Actions auto-release
+        main  ← tag here → GitHub Actions auto-release
 ```
 
-### Aturan branch
+### Branch rules
 
-- **Jangan commit langsung ke `main` atau `development`**
-- Semua perubahan masuk lewat Pull Request
-- Branch name: lowercase, kata dipisah dengan `-`
+- **Never commit directly to `main` or `development`**
+- All changes go through a Pull Request
+- Branch names: lowercase, words separated by `-`
   - ✅ `feature/filter-sidebar`
   - ✅ `fix/tui-cursor-overflow`
   - ❌ `FeatureFilterSidebar`, `my-branch`
-- Hapus branch setelah PR di-merge
+- Delete branches after the PR is merged
 
-### Membuat branch baru
+### Creating a new branch
 
 ```bash
-# Selalu branching dari development
+# Always branch off development
 git checkout development
 git pull origin development
-git checkout -b feature/nama-fitur
+git checkout -b feature/your-feature-name
 ```
 
 ---
 
 ## Commit messages
 
-Format wajib: **`<type>(<scope>): <deskripsi singkat>`**
+Required format: **`<type>(<scope>): <short description>`**
 
 ```
-<type>(<scope>): <deskripsi singkat>
+<type>(<scope>): <short description>
 
-[opsional: body — jelaskan WHY, bukan WHAT]
+[optional body — explain WHY, not WHAT]
 
-[opsional: footer — breaking change, closes issue]
+[optional footer — breaking change, closes issue]
 ```
 
 ### Types
 
-| Type | Kapan dipakai |
+| Type | When to use |
 | --- | --- |
-| `feat` | Fitur baru |
+| `feat` | New feature |
 | `fix` | Bug fix |
-| `refactor` | Ubah code tanpa tambah fitur atau fix bug |
-| `test` | Tambah atau update test |
-| `docs` | Perubahan dokumentasi saja |
-| `chore` | Maintenance: update deps, config, CI, dll |
-| `perf` | Optimasi performa |
+| `refactor` | Code change with no new feature or bug fix |
+| `test` | Add or update tests |
+| `docs` | Documentation changes only |
+| `chore` | Maintenance: deps, config, CI, etc. |
+| `perf` | Performance improvement |
 
-### Scopes (opsional tapi dianjurkan)
+### Scopes (optional but recommended)
 
 `listener`, `store`, `tui`, `config`, `cmd`, `ci`, `deps`
 
-### Contoh commit message yang benar
+### Good commit message examples
 
 ```
 feat(tui): add pause/resume with pending event count
@@ -98,43 +98,43 @@ Use Dockerfile.goreleaser which copies pre-built binary instead of
 building from source — GoReleaser provides the binary in build context.
 ```
 
-### Aturan commit
+### Commit rules
 
-- Deskripsi: **lowercase**, **imperative mood** ("add" bukan "added"), **tanpa titik di akhir**
-- Maksimal 72 karakter di baris pertama
-- Jelaskan *mengapa* di body, bukan *apa* — code sudah menjelaskan *apa*
-- Satu commit = satu perubahan logis. Jangan campur fix bug dengan refactor
-- Commit kecil lebih baik daripada satu commit besar
+- Description: **lowercase**, **imperative mood** ("add" not "added"), **no trailing period**
+- Max 72 characters on the first line
+- Explain *why* in the body, not *what* — the code already shows what changed
+- One commit = one logical change. Don't mix a bug fix with a refactor
+- Small commits are better than one large commit
 
 ---
 
-## Pull Request
+## Pull Requests
 
-### Sebelum buat PR
+### Before opening a PR
 
 ```bash
-# Pastikan semua test lulus
+# All tests must pass
 go test -race ./...
 
-# Pastikan tidak ada warning
+# No vet warnings
 go vet ./...
 
-# Pastikan code ter-format
+# Code must be formatted
 gofmt -l .
 ```
 
-### Judul PR
+### PR title
 
-Ikuti format commit message: `feat(scope): deskripsi singkat`
+Follow the commit message format: `feat(scope): short description`
 
-### Isi PR description
+### PR description template
 
 ```
 ## What
-[Apa yang berubah — satu paragraf]
+[What changed — one paragraph]
 
 ## Why
-[Kenapa perubahan ini diperlukan]
+[Why this change is needed]
 
 ## How to test
 - [ ] Step 1
@@ -143,20 +143,20 @@ Ikuti format commit message: `feat(scope): deskripsi singkat`
 
 ### Review rules
 
-- Minimal 1 approval sebelum merge
-- Semua CI checks harus hijau
-- Resolve semua comment sebelum merge
-- Gunakan **Squash and merge** untuk feature branch ke development
-- Gunakan **Merge commit** untuk release branch ke main
+- At least 1 approval before merging
+- All CI checks must be green
+- Resolve all comments before merging
+- Use **Squash and merge** for feature branches into development
+- Use **Merge commit** for release branches into main
 
 ---
 
 ## Release process
 
-1. Buat branch `release/vX.Y.Z` dari `development`
-2. Update `CHANGELOG.md` — pindahkan dari `[Unreleased]` ke `[X.Y.Z] - YYYY-MM-DD`
-3. PR ke `main`
-4. Setelah merge, tag di `main`:
+1. Create a `release/vX.Y.Z` branch from `development`
+2. Update `CHANGELOG.md` — move items from `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD`
+3. Open a PR to `main`
+4. After merge, tag on `main`:
 
 ```bash
 git checkout main
@@ -165,24 +165,24 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-GitHub Actions akan otomatis build dan publish release.
+GitHub Actions will automatically build and publish the release.
 
 ---
 
 ## Versioning
 
-DBWatch mengikuti [Semantic Versioning](https://semver.org/):
+DBWatch follows [Semantic Versioning](https://semver.org/):
 
-- **PATCH** `v0.1.1` — bug fix, tidak ada perubahan API
-- **MINOR** `v0.2.0` — fitur baru, backward compatible
-- **MAJOR** `v1.0.0` — breaking change
+- **PATCH** `v0.1.1` — bug fix, no API changes
+- **MINOR** `v0.2.0` — new features, backward compatible
+- **MAJOR** `v1.0.0` — breaking changes
 
 ---
 
 ## Development setup
 
 ```bash
-# Clone dan setup
+# Clone and setup
 git clone https://github.com/rifqiagniamubarok/dbwatcher.git
 cd dbwatcher
 git checkout development
@@ -190,10 +190,10 @@ git checkout development
 # Build
 make build
 
-# Test
+# Run tests
 make test
 
-# Start test database (butuh Docker)
+# Start test database (requires Docker)
 ./scripts/start-postgres.sh
 
 # Run
@@ -206,27 +206,26 @@ make test
 ## Folder structure
 
 ```
-cmd/dbwatch/        ← entry point dan wiring saja, tidak ada logic
+cmd/dbwatch/        ← entry point and wiring only, no business logic
 internal/
-  listener/         ← WAL streaming dan decoding
-  store/            ← ring buffer dan pub/sub
+  listener/         ← WAL streaming and decoding
+  store/            ← ring buffer and pub/sub
   tui/              ← Bubble Tea TUI
   config/           ← config loader
 scripts/            ← dev helper scripts
 .github/workflows/  ← CI/CD
 ```
 
-**Aturan import antar package:**
+### Package import rules
 
-- `store` → tidak boleh import package internal lain
-- `listener` → boleh import `store`
-- `tui` → boleh import `store`, tidak boleh import `listener`
+- `store` → must not import any other internal package
+- `listener` → may import `store`
+- `tui` → may import `store`, must not import `listener`
 - `config` → standalone
 
 ---
 
-## Jika stuck
+## If you get stuck
 
-1. Cek `PLAN.md` untuk konteks phase dan task
-2. Cek `ARCHITECTURE.md` untuk desain sistem
-3. Buka issue di GitHub dengan label `question`
+1. Check `ARCHITECTURE.md` for system design context
+2. Open an issue on GitHub with the `question` label
