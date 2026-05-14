@@ -1,234 +1,160 @@
 # DBWatch
 
-> `tail -f` for your Postgres database. Watch inserts, updates, and deletes in realtime while you develop.
-
-## What is DBWatch?
-
-DBWatch is a developer CLI tool that streams every INSERT, UPDATE, and DELETE from your Postgres database directly to your terminal — in realtime, with diff view for updates. Think of it as `tail -f` for your database.
-
-When you're debugging code that touches Postgres, DBWatch shows you exactly what's changing and when, without writing a single query. It uses Postgres logical replication, so there's zero overhead on your application.
-
-**This is a dev tool**, not a production observability solution. For production use cases, look at Debezium, pgaudit, or similar.
-
-## Demo
+Watch every database change happen live in your terminal — like `tail -f` but for Postgres.
 
 ```text
 ┌────────────────────────────────────────────────────────────────┐
-│ dbwatch — mydb@localhost  •  ▶ live (45 events)                │
+│ dbwatch — test@localhost  •  ▶ live (12 events)                │
 ├──────────────┬─────────────────────────────────────────────────┤
-│ Tables       │ 14:32:01.123  INSERT  orders     id=42          │
-│ [x] orders   │ 14:32:01.156  INSERT  order_items id=87         │
-│ [x] users    │ 14:32:01.189  UPDATE  inventory  stock 50 → 47  │
-│ [ ] sessions │ 14:32:05.401  DELETE  cart_items id=7           │
-│ [x] inventory│                                                 │
+│ Tables       │ 14:32:01.123  INSERT  users      id=1           │
+│ [x] users    │ 14:32:03.456  UPDATE  users      email old→new  │
+│ [x] orders   │ 14:32:05.789  DELETE  orders     id=7           │
 ├──────────────┴─────────────────────────────────────────────────┤
 │ space:pause  j/k:nav  enter:expand  f:filter  c:clear  q:quit  │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+---
+
+## Before you start
+
+Your Postgres needs `wal_level = logical`. Check it:
 
 ```bash
-# 1. Start Postgres with logical replication enabled
-docker run -d --name pg-dev \
-  -e POSTGRES_PASSWORD=dev \
+psql YOUR_DB_URL -c "SHOW wal_level;"
+```
+
+If the result is **`logical`** → skip to [Running DBWatch](#running-dbwatch).
+
+If the result is **`replica`** or **`minimal`** → follow the one-time setup below.
+
+---
+
+## One-time Postgres setup
+
+### Using Homebrew Postgres
+
+```bash
+# 1. Enable logical replication
+psql YOUR_DB_URL -c "ALTER SYSTEM SET wal_level = logical;"
+
+# 2. Restart Postgres (replace @14 with your version)
+brew services restart postgresql@14
+
+# 3. Confirm it worked
+psql YOUR_DB_URL -c "SHOW wal_level;"
+# should print: logical
+```
+
+### Using Docker
+
+Add `-c wal_level=logical` when starting the container:
+
+```bash
+docker run -d --name my-pg \
+  -e POSTGRES_PASSWORD=yourpassword \
   -p 5432:5432 \
   postgres:16 -c wal_level=logical
-
-# 2. Install and run DBWatch
-go install github.com/rifqiagniamubarok/dbwatcher/cmd/dbwatch@latest
-dbwatch tail --db-url="postgres://postgres:dev@localhost:5432/postgres?sslmode=disable&replication=database"
-
-# 3. In another terminal, make changes — watch them appear live
-psql "postgres://postgres:dev@localhost:5432/postgres?sslmode=disable" \
-  -c "INSERT INTO users VALUES (1, 'alice');"
 ```
 
-## Installation
-
-### Via `go install`
+### Grant your user REPLICATION access
 
 ```bash
-go install github.com/rifqiagniamubarok/dbwatcher/cmd/dbwatch@latest
+psql YOUR_DB_URL -c "ALTER USER your_username REPLICATION;"
 ```
 
-### Via Docker
+---
+
+## Running DBWatch
 
 ```bash
-docker run --rm -it ghcr.io/rifqiagniamubarok/dbwatcher:latest tail --db-url=...
+# Build first (only once)
+make build
+
+# Run — replace with your actual credentials
+./bin/dbwatch tail \
+  --db-url="postgres://USERNAME:PASSWORD@localhost:5432/DBNAME?sslmode=disable&replication=database"
 ```
 
-### Manual download
-
-Download the binary for your platform from [GitHub Releases](https://github.com/rifqiagniamubarok/dbwatcher/releases).
-
-## Postgres Setup
-
-DBWatch uses Postgres logical replication. Your database needs:
-
-### 1. Enable logical replication
-
-In `postgresql.conf`:
-
-```ini
-wal_level = logical
-```
-
-Then restart Postgres.
-
-For Docker, add `-c wal_level=logical` to your `docker run` command.
-
-### 2. User privileges
-
-```sql
-ALTER USER myuser REPLICATION;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO myuser;
-```
-
-### 3. Create a publication
-
-DBWatch creates this automatically, or you can create it manually:
-
-```sql
-CREATE PUBLICATION dbwatch_pub FOR ALL TABLES;
-```
-
-### 4. Optional: full diff for UPDATE/DELETE
-
-By default, UPDATE and DELETE only include the primary key in old values. For full row diffs:
-
-```sql
-ALTER TABLE mytable REPLICA IDENTITY FULL;
-```
-
-### Quick dev setup with Docker
+**Example** with username `local`, password `local`, database `test`:
 
 ```bash
-docker run -d \
-  --name pg-dev \
-  -e POSTGRES_PASSWORD=dev \
-  -p 5432:5432 \
-  postgres:16 \
-  -c wal_level=logical
+./bin/dbwatch tail \
+  --db-url="postgres://local:local@localhost:5432/test?sslmode=disable&replication=database"
 ```
 
-## Usage
+The TUI will open automatically. Now go make some changes in your database and watch them appear live.
 
-```bash
-dbwatch tail [flags]
-```
+---
 
-### Flags
+## Navigating the TUI
 
-| Flag | Env var | Default | Description |
-| --- | --- | --- | --- |
-| `--db-url` | `DBWATCH_DB_URL` | — | Postgres connection URL (required) |
-| `--publication` | `DBWATCH_PUBLICATION` | `dbwatch_pub` | Publication name |
-| `--slot` | `DBWATCH_SLOT` | `dbwatch_slot` | Replication slot name |
-| `--buffer` | `DBWATCH_BUFFER` | `1000` | Event ring buffer size |
-| `--log-level` | `DBWATCH_LOG_LEVEL` | `warn` | Log level: debug, info, warn, error |
-| `--output` | — | `auto` | Output mode: auto, tui, json |
-
-### Connection URL format
-
-```text
-postgres://user:password@host:port/database?sslmode=disable&replication=database
-```
-
-Note: `replication=database` is required in the URL for logical replication.
-
-### Pipe-friendly mode
-
-When stdout is not a TTY (piped to another command), DBWatch automatically outputs one JSON event per line:
-
-```bash
-dbwatch tail --db-url=... | jq 'select(.table == "orders")'
-dbwatch tail --db-url=... --output=json > events.log
-```
-
-## Keybindings
-
-| Key | Action |
+| Key | What it does |
 | --- | --- |
-| `j` / `↓` | Move cursor down |
-| `k` / `↑` | Move cursor up |
-| `g` | Jump to oldest event |
-| `G` | Jump to newest event |
-| `enter` | Expand / collapse event detail |
-| `space` | Pause / resume live feed |
-| `f` | Toggle filter sidebar focus |
-| `space` (in filter) | Toggle table visibility |
-| `esc` / `f` (in filter) | Return to feed |
-| `c` | Clear feed (press `c` again to confirm) |
-| `?` | Toggle help overlay |
-| `q` / `Ctrl+C` | Quit |
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `enter` | Expand event to see full diff |
+| `space` | Pause / resume the live feed |
+| `f` | Open table filter (show/hide specific tables) |
+| `g` / `G` | Jump to oldest / newest event |
+| `c` | Clear all events (press `c` twice to confirm) |
+| `?` | Show help |
+| `q` | Quit |
+
+---
+
+## Using it as a pipe (JSON mode)
+
+When you pipe the output to another command, DBWatch automatically switches to JSON mode — one event per line:
+
+```bash
+# Filter only orders table
+./bin/dbwatch tail --db-url="..." | jq 'select(.table == "orders")'
+
+# Save to file
+./bin/dbwatch tail --db-url="..." --output=json > events.log
+```
+
+---
+
+## All flags
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--db-url` | *(required)* | Your Postgres connection URL |
+| `--slot` | `dbwatch_slot` | Replication slot name |
+| `--publication` | `dbwatch_pub` | Publication name |
+| `--output` | `auto` | `auto`, `tui`, or `json` |
+| `--buffer` | `1000` | How many events to keep in memory |
+| `--log-level` | `warn` | `debug`, `info`, `warn`, `error` |
+
+You can also set `--db-url` via the `DBWATCH_DB_URL` environment variable instead of passing it every time.
+
+---
 
 ## Troubleshooting
 
-### Cannot connect
+**"Cannot connect to Postgres"**
+→ Make sure Postgres is running and the URL is correct. Try `psql YOUR_URL` first.
 
-```text
-Cannot connect to Postgres.
-  → Is the database running and accessible at the given address?
-```
+**"Postgres is not configured for logical replication"**
+→ Follow the [one-time setup](#one-time-postgres-setup) above.
 
-- Check that Postgres is running: `pg_isready -h localhost -p 5432`
-- Verify the connection URL is correct
-- Try connecting with `psql` first to isolate the issue
+**"User does not have REPLICATION privilege"**
+→ Run: `ALTER USER your_username REPLICATION;`
 
-### wal_level error
-
-```text
-Postgres is not configured for logical replication.
-  → Set wal_level=logical in postgresql.conf and restart Postgres.
-```
-
-Check current setting: `SHOW wal_level;`
-
-### REPLICATION privilege
-
-```text
-The database user does not have REPLICATION privilege.
-  → Run: ALTER USER <your-user> REPLICATION;
-```
-
-### Replication slot already exists
-
-```text
-Replication slot already exists (possibly from a previous crashed run).
-  → Drop it: SELECT pg_drop_replication_slot('<slot-name>');
-```
-
-### TLS error
-
-Add `?sslmode=disable` to your connection URL if your local Postgres doesn't use TLS:
-
-```text
-postgres://user:pass@localhost:5432/db?sslmode=disable&replication=database
-```
-
-## Architecture
-
-See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for technical design details.
-
-## Development
+**"Replication slot already exists"**
+→ A previous run crashed. Drop the slot and retry:
 
 ```bash
-# Run from source
-go run ./cmd/dbwatch tail --db-url=...
-
-# Build binary
-make build
-
-# Run tests
-make test
-
-# Start test Postgres (Docker required)
-./scripts/start-postgres.sh
+psql YOUR_DB_URL -c "SELECT pg_drop_replication_slot('dbwatch_slot');"
 ```
 
-See [`PLAN.md`](./PLAN.md) for the development roadmap.
+**TLS error**
+→ Add `?sslmode=disable` to your URL (most local databases don't need TLS).
+
+---
 
 ## License
 
-MIT — see [`LICENSE`](./LICENSE).
+MIT
