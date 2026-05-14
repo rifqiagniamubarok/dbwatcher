@@ -45,10 +45,21 @@ func formatSummary(e store.Event) string {
 		}
 	case store.EventUpdate:
 		// Show first changed field: old → new
+		// When OldValues is absent (no REPLICA IDENTITY FULL) only show new value.
 		for _, col := range e.Columns {
-			oldV := formatValue(e.OldValues[col.Name])
 			newV := formatValue(e.NewValues[col.Name])
-			if oldV != newV && !col.IsKey {
+			if col.IsKey {
+				continue
+			}
+			if len(e.OldValues) == 0 {
+				// No old-value info — just show the new value for the first non-key column.
+				return fmt.Sprintf("%s %s",
+					col.Name,
+					styleDiffNew.Render(truncate(newV, 16)),
+				)
+			}
+			oldV := formatValue(e.OldValues[col.Name])
+			if oldV != newV {
 				return fmt.Sprintf("%s %s → %s",
 					col.Name,
 					styleDiffOld.Render(truncate(oldV, 12)),

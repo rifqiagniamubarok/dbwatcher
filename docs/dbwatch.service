@@ -1,0 +1,14 @@
+[Unit]
+Description=DBWatch Postgres change daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dbwatch daemon start --name=default --db-url=postgres://test:test@localhost:5432/test?sslmode=disable&replication=database
+Restart=on-failure
+RestartSec=2s
+User=%i
+Environment=DBWATCH_LOG_LEVEL=warn
+
+[Install]
+WantedBy=default.target

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pglogrepl"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 
@@ -14,9 +15,9 @@ import (
 )
 
 const (
-	outputPlugin    = "pgoutput"
-	standbyTimeout  = 10 * time.Second
-	ackInterval     = 5 * time.Second
+	outputPlugin   = "pgoutput"
+	standbyTimeout = 10 * time.Second
+	ackInterval    = 5 * time.Second
 )
 
 // Listener connects to Postgres via logical replication and pushes decoded
@@ -51,6 +52,12 @@ func (l *Listener) Start(ctx context.Context) error {
 	// Ensure publication exists.
 	if err := l.ensurePublication(ctx, conn); err != nil {
 		return friendlyError(err)
+	}
+
+	// Set REPLICA IDENTITY FULL on every user table so UPDATE/DELETE carry old values.
+	if err := l.ensureReplicaIdentityFull(ctx); err != nil {
+		// Non-fatal: warn and continue. The user may not have superuser rights.
+		slog.Warn("could not set REPLICA IDENTITY FULL on all tables", "err", err)
 	}
 
 	// Create a temporary replication slot (auto-dropped on disconnect).
@@ -212,6 +219,62 @@ func (l *Listener) readLoop(
 			return friendlyError(fmt.Errorf("%s", msg.Message))
 		}
 	}
+}
+
+// ensureReplicaIdentityFull opens a normal (non-replication) connection and
+// sets REPLICA IDENTITY FULL on every user table in the database that does not
+// already have it. This makes UPDATE and DELETE events include the old row
+// values without requiring per-table manual setup.
+func (l *Listener) ensureReplicaIdentityFull(ctx context.Context) error {
+	// Strip the replication=database parameter — it is only valid for
+	// replication connections, not regular queries.
+	normalURL := stripReplicationParam(l.dbURL)
+
+	conn, err := pgx.Connect(ctx, normalURL)
+	if err != nil {
+		return fmt.Errorf("open normal connection: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	// Query all user tables (excluding system schemas) that don't already have
+	// REPLICA IDENTITY FULL ('f' in pg_class.relreplident).
+	rows, err := conn.Query(ctx, `
+		SELECT quote_ident(n.nspname) || '.' || quote_ident(c.relname)
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind = 'r'
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND c.relreplident <> 'f'
+	`)
+	if err != nil {
+		return fmt.Errorf("query tables: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return fmt.Errorf("scan table name: %w", err)
+		}
+		tables = append(tables, t)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate tables: %w", err)
+	}
+
+	for _, t := range tables {
+		if _, err := conn.Exec(ctx, fmt.Sprintf("ALTER TABLE %s REPLICA IDENTITY FULL", t)); err != nil {
+			slog.Warn("could not set REPLICA IDENTITY FULL", "table", t, "err", err)
+		} else {
+			slog.Info("set REPLICA IDENTITY FULL", "table", t)
+		}
+	}
+
+	if len(tables) == 0 {
+		slog.Debug("all tables already have REPLICA IDENTITY FULL")
+	}
+	return nil
 }
 
 func sendStandbyStatus(ctx context.Context, conn *pgconn.PgConn, lsn pglogrepl.LSN) error {

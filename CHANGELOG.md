@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Phase 5 — Daemon mode:** `dbwatch daemon {start,stop,status,list,logs}` and `dbwatch attach` are now available. The daemon keeps a single Listener+Store process alive and serves clients over a Unix domain socket with NDJSON envelopes (`hello`, `snapshot`, `event`, `stats`, `ping`).
+- **Core runner extraction:** shared `internal/core/runner.go` now wires Listener to Store for both `tail` and `daemon` modes.
+- **IPC transport package:** new `internal/ipc/` package with protocol, socket-path resolution, server/client implementation, and roundtrip tests.
+- **Daemon lifecycle helpers:** new `internal/daemon/` utilities for PID files, process stop logic, stale-file cleanup, and detached log truncation policy.
+- **Service templates:** added `docs/dbwatch.service` (systemd) and `docs/dbwatch.plist` (launchd).
+
 ### Planned
 
-- **Phase 5 — Daemon mode:** run `dbwatch` as a background process and attach a TUI from any terminal. New subcommands `dbwatch daemon {start,stop,status,list}` and `dbwatch attach`. Uses a Unix domain socket and newline-delimited JSON. Multiple clients can attach to the same daemon. See `PLAN.md` and `ARCHITECTURE.md`.
 - **Phase 6 — Web UI:** optional HTTP + WebSocket dashboard via `dbwatch serve`. Embedded frontend, shares the same Store as CLI and daemon.
 
 ## [0.1.0] — 2026-05-14

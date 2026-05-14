@@ -118,6 +118,43 @@ docker run -d \
 dbwatch tail [flags]
 ```
 
+### Background mode (Phase 5)
+
+Run DBWatch as a background daemon, then attach from one or more terminals:
+
+```bash
+# Start daemon in background
+dbwatch daemon start --name=default --db-url="postgres://...&replication=database" --detach
+
+# Check status
+dbwatch daemon status --name=default
+
+# Attach interactive TUI
+dbwatch attach --name=default
+
+# Attach JSON stream for pipes
+dbwatch attach --name=default --output=json | jq .
+
+# Stop daemon
+dbwatch daemon stop --name=default
+```
+
+Available daemon commands:
+
+- `dbwatch daemon start [--name] [--detach] --db-url=...`
+- `dbwatch daemon stop [--name]`
+- `dbwatch daemon status [--name]`
+- `dbwatch daemon list`
+- `dbwatch daemon logs [--name] [--follow]`
+
+Daemon runtime files:
+
+- Socket: `$XDG_RUNTIME_DIR/dbwatch/<name>.sock` (fallback `~/.dbwatch/<name>.sock`)
+- PID: `$XDG_RUNTIME_DIR/dbwatch/<name>.pid` (fallback `~/.dbwatch/<name>.pid`)
+- Log: `$XDG_RUNTIME_DIR/dbwatch/<name>.log` (fallback `~/.dbwatch/<name>.log`)
+
+You can override the runtime directory with `DBWATCH_SOCKET_DIR`.
+
 ### Flags
 
 | Flag | Env var | Default | Description |
@@ -210,6 +247,11 @@ postgres://user:pass@localhost:5432/db?sslmode=disable&replication=database
 ## Architecture
 
 See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for technical design details.
+
+## Service examples
+
+- Linux systemd example: [`docs/dbwatch.service`](./docs/dbwatch.service)
+- macOS launchd example: [`docs/dbwatch.plist`](./docs/dbwatch.plist)
 
 ## Development
 

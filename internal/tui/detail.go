@@ -48,9 +48,25 @@ func renderDiff(b *strings.Builder, oldVals, newVals map[string]any, cols []stor
 		colNames = keys
 	}
 
+	// When OldValues is nil the table has no REPLICA IDENTITY FULL — we can
+	// only show the new (post-update) state.
+	if len(oldVals) == 0 {
+		b.WriteString(styleDim.Render("    ⚠  old values unavailable (set REPLICA IDENTITY FULL on this table)") + "\n")
+		renderValues(b, newVals, cols, width)
+		return
+	}
+
 	for _, name := range colNames {
-		oldV := formatValue(oldVals[name])
 		newV := formatValue(newVals[name])
+
+		// Use "?" when the old value is absent for this column (partial replica
+		// identity or TOAST column that wasn't updated).
+		var oldV string
+		if v, ok := oldVals[name]; ok {
+			oldV = formatValue(v)
+		} else {
+			oldV = "?"
+		}
 
 		if oldV == newV {
 			line := fmt.Sprintf("    %-20s %s  %s",
