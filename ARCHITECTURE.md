@@ -77,7 +77,7 @@ All components inside the DBWatch binary live in one process and talk through Go
 4. For each pgoutput message:
    - `RelationMessage`: update the schema cache if missing
    - `InsertMessage`, `UpdateMessage`, `DeleteMessage`: decode into an `Event` and push to the Store
-   - `BeginMessage`, `CommitMessage`: track transaction context (for grouping in v0.2)
+   - `BeginMessage`, `CommitMessage`: tracked but not yet exposed (transaction grouping is a future enhancement)
 5. Acknowledge the LSN periodically so Postgres doesn't accumulate WAL.
 
 **Dependencies:** `github.com/jackc/pglogrepl`, `github.com/jackc/pgx/v5`.
@@ -261,12 +261,13 @@ Everything is built automatically by GoReleaser, triggered by a git tag.
 dbwatch/
 ├── cmd/
 │   └── dbwatch/
-│       └── main.go              # entry point, wire Cobra
+│       └── main.go              # entry point, Cobra wiring for tail/attach/daemon/version
 ├── internal/
 │   ├── listener/
 │   │   ├── listener.go          # logical replication consumer
 │   │   ├── decoder.go           # pgoutput → Event
-│   │   └── schema_cache.go      # column metadata cache
+│   │   ├── schema_cache.go      # column metadata cache
+│   │   └── errors.go            # friendly error messages
 │   ├── store/
 │   │   ├── store.go             # ring buffer + pub/sub
 │   │   └── event.go             # Event, Column structs
@@ -276,8 +277,21 @@ dbwatch/
 │   │   ├── filter.go            # sidebar filter component
 │   │   ├── detail.go            # detail / diff component
 │   │   └── styles.go            # lipgloss styles
-│   └── config/
-│       └── config.go            # parse env + flag
+│   ├── config/
+│   │   └── config.go            # parse env + flag
+│   ├── core/
+│   │   └── runner.go            # shared Listener→Store wiring
+│   ├── ipc/                     # Unix-socket transport for daemon mode
+│   │   ├── protocol.go
+│   │   ├── server.go
+│   │   ├── client.go
+│   │   └── socket_path.go
+│   └── daemon/                  # PID file, signal-based stop, log rotation
+│       ├── lifecycle.go
+│       └── status.go
+├── docs/
+│   ├── dbwatch.service          # systemd unit example
+│   └── dbwatch.plist            # launchd plist example
 ├── go.mod
 ├── go.sum
 ├── Makefile
@@ -301,9 +315,9 @@ dbwatch/
 | Testing | stdlib `testing` + `stretchr/testify` | Standard combination |
 | Build & release | Makefile + GoReleaser | Auto multi-platform build + Docker + GitHub Release |
 
-## Daemon mode (Phase 5)
+## Daemon mode
 
-Starting from Phase 5, DBWatch supports a daemon mode: a background process that runs the Listener and Store, plus TUI/JSON clients that attach over a Unix socket. The `tail` mode (all-in-one, foreground) remains the default and is unaffected.
+DBWatch supports a daemon mode: a background process that runs the Listener and Store, with TUI/JSON clients that attach over a Unix socket. The `tail` mode (all-in-one, foreground) remains the default and is unaffected.
 
 ### Architecture
 
@@ -318,31 +332,50 @@ Starting from Phase 5, DBWatch supports a daemon mode: a background process that
 │                       (Unix socket)    │
 └──────────────┬─────────────────────────┘
                │ NDJSON
-       ┌───────┼───────┬───────────┐
-       ▼       ▼       ▼           ▼
-   attach   attach   attach     dbwatch serve
-   (TUI)    (JSON)   (TUI #2)   (future Web UI)
+       ┌───────┼───────┐
+       ▼       ▼       ▼
+   attach   attach   attach
+   (TUI)    (JSON)   (TUI #2)
 ```
 
 Each client is just another subscriber on the same Store — no duplicate Listener, no extra Postgres connection. The daemon is the single source of truth; clients are lightweight views.
 
+### Core runner
+
+`internal/core/runner.go` exposes a single function `Run(ctx, cfg, store, onEvent)` that wires the Listener into the Store. Both `tail` and `daemon start` call this; the difference is only what subscribes to the Store afterwards.
+
+- `tail` — `core.Run` + local TUI or JSON renderer
+- `daemon start` — `core.Run` + `internal/ipc.Server`
+- `attach` — `internal/ipc.Client` + local TUI or JSON renderer (no Listener at all)
+
+The Listener and Store are unchanged from earlier phases.
+
 ### IPC layer
 
-New package `internal/ipc/`:
+Package `internal/ipc/`:
 
-- **Transport:** Unix domain socket at `$XDG_RUNTIME_DIR/dbwatch/<name>.sock` (fallback `~/.dbwatch/<name>.sock`), permission `0600`. Windows 10+ supports AF_UNIX, so cross-platform stays on one path.
-- **Wire format:** newline-delimited JSON. Each line is a message envelope:
+- **Transport:** Unix domain socket at `$XDG_RUNTIME_DIR/dbwatch/<name>.sock` (fallback `~/.dbwatch/<name>.sock`), permission `0600`. The socket dir can be overridden with the `DBWATCH_SOCKET_DIR` env var.
+- **Wire format:** newline-delimited JSON envelopes. Types currently sent by the server:
 
   ```json
-  {"type": "event",    "data": { /* Event */ }}
+  {"type": "hello",    "data": {"version": "0.2.0-dev", "db": "..."}}
   {"type": "snapshot", "data": [ /* Event[] */ ]}
-  {"type": "hello",    "data": {"version": "0.2.0", "uptime_s": 142}}
-  {"type": "stats",    "data": {"events": 4521, "clients": 2}}
-  {"type": "ping"}     {"type": "pong"}
+  {"type": "event",    "data": { /* Event */ }}
+  {"type": "stats",    "data": {"clients": 2, "received": 4521, "buffered": 1000}}
+  {"type": "pong"}
   ```
 
-- **Connection lifecycle:** the server sends `hello` + `snapshot` when a client connects, then streams `event` messages. Clients send `ping` periodically (15s) to keep the connection alive. The server closes the connection if it sees no ping for > 60s.
-- **Backpressure:** the Store already drops events for slow subscribers when their channel is full. The same applies to the IPC server — if a socket is slow (client hung), events are dropped for that client only.
+  Types sent by the client:
+
+  ```json
+  {"type": "ping"}
+  {"type": "subscribe", "data": {"tables": []}}
+  ```
+
+- **Connection lifecycle:** on connect the server sends `hello` + `snapshot`, then streams `event` and periodic `stats` (5s ticker). The client can send `ping` to request an immediate `stats` reply, or `subscribe` (currently a placeholder — every client receives all events; per-client table filtering is a future enhancement).
+- **Backpressure:** every client has a 100-event channel on the server side via the existing Store pub/sub. If a client's socket is slow, events are silently dropped for that client only — the Listener and other clients are unaffected.
+
+Cross-platform note: AF_UNIX works on Linux, macOS, and Windows 10+. The lifecycle helpers in `internal/daemon/` use `syscall.Kill`, which is POSIX-only; full Windows daemon support is not in v0.2.
 
 ### Process model
 
@@ -352,44 +385,47 @@ New package `internal/ipc/`:
 | `daemon start` | ✓ | ✓ | — | ✓ | — |
 | `attach` | — | — | ✓ | — | ✓ |
 
-A small refactor is needed: extract a `runCore(ctx, cfg, store)` function that only starts the Listener. Then `tail` = runCore + local renderer; `daemon` = runCore + IPC server; `attach` = IPC client + local renderer.
-
-**The Listener and Store don't change at all.** Phase 5 only adds the `internal/ipc/` package and two new subcommands.
-
 ### Folder structure additions
 
 ```
 internal/
+├── core/
+│   └── runner.go          # wires Listener → Store, shared by tail and daemon
 ├── ipc/
 │   ├── protocol.go        # message envelope, type constants
 │   ├── server.go          # accept connections, fan out from Store
-│   ├── client.go          # connect, expose <-chan Event
-│   └── socket_path.go     # resolve socket path from --name
+│   ├── client.go          # connect, expose <-chan Event and <-chan StatsData
+│   ├── socket_path.go     # resolve socket / pid / log paths from --name
+│   └── *_test.go          # roundtrip and path-resolution tests
 └── daemon/
-    ├── lifecycle.go       # PID file, detach, log redirection
-    └── status.go          # status / list helpers
+    ├── lifecycle.go       # PID file I/O, signal-based stop, log truncation
+    └── status.go          # stale-file cleanup
 ```
 
 ### Configuration additions
 
 | Setting | Flag | Default | Used by |
 | --- | --- | --- | --- |
-| Daemon name | `--name` | `default` | `daemon start/stop/status`, `attach` |
+| Daemon name | `--name` | `default` | `daemon start/stop/status/logs`, `attach` |
 | Detach | `--detach` | `false` | `daemon start` |
+| Internal child mode | `--daemon-child` | `false` | `daemon start` (internal, set by the detach fork) |
+| Follow log | `--follow` | `false` | `daemon logs` |
+| Attach buffer | `--buffer` | `1000` | `attach` (local TUI ring buffer) |
 | Socket dir | `DBWATCH_SOCKET_DIR` (env) | `$XDG_RUNTIME_DIR/dbwatch` or `~/.dbwatch` | all daemon/attach commands |
 
 ### Security model
 
 - Socket file `0600`, owned by the user who started the daemon — kernel-level access control via filesystem permissions
 - No protocol-layer auth (local-only); if an attacker can read the socket file, they already have access as the same user
-- No TCP listener — the daemon **never** binds to a network address. For remote access, use SSH port-forwarding, or `dbwatch serve` (Phase 6) which is explicitly network-facing
+- No TCP listener — the daemon **never** binds to a network address. For remote access, use SSH port-forwarding.
 
 ## Future extension points
 
 The architecture is designed so the features below can be added **without changing the Listener or the Store**:
 
-- **Daemon mode (Phase 5):** see the section above. Adds `internal/ipc/` and `internal/daemon/`.
-- **Web UI (Phase 6):** add `internal/server/` with HTTP + WebSocket. Can subscribe to the Store directly (standalone mode) or act as an IPC client to the daemon (shared mode).
+- **Marker HTTP API (Phase 6, planned):** add `internal/markerapi/` with a small HTTP server (`POST /marker`, `POST /log`, `GET /health`). Runs alongside the IPC server in the daemon and inside `tail`. Pushes marker / log items into the Store so they show up as separators in the TUI feed. Requires a `FeedItem` interface in `internal/store/` so the ring buffer can hold both events and markers.
+- **Web UI (later):** add `internal/server/` with HTTP + WebSocket. Subscribe to the Store directly (standalone) or act as an IPC client to the daemon (shared).
+- **Per-client table filtering:** flesh out the `subscribe` envelope in `internal/ipc/` so each attach can request a different subset of tables instead of receiving everything.
 - **Session correlation:** add `ApplicationName` and `Pid` fields on Event. The Listener decodes them from Postgres metadata.
 - **MCP server:** add `internal/mcp/` that exposes the Store as an MCP resource for AI agents. Could also be implemented as an IPC client to the daemon.
 - **Persistent storage:** add a new subscriber to the Store that writes to SQLite. Does not replace the ring buffer.

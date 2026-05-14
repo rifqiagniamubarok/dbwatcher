@@ -118,44 +118,53 @@ docker run -d \
 dbwatch tail [flags]
 ```
 
-### Background mode (Phase 5)
+### Background mode
 
-Run DBWatch as a background daemon, then attach from one or more terminals:
+If you want DBWatch to keep collecting events while you close and reopen terminals — or watch from more than one terminal at once — run it as a daemon:
 
 ```bash
-# Start daemon in background
-dbwatch daemon start --name=default --db-url="postgres://...&replication=database" --detach
+# Start in the background
+dbwatch daemon start --db-url="postgres://...&replication=database" --detach
 
-# Check status
-dbwatch daemon status --name=default
+# Check it's healthy
+dbwatch daemon status
+# running (pid 4521, uptime 3m12s, events 142, clients 0)
 
-# Attach interactive TUI
-dbwatch attach --name=default
+# Attach a live TUI (Ctrl+C / q leaves the daemon running)
+dbwatch attach
 
-# Attach JSON stream for pipes
-dbwatch attach --name=default --output=json | jq .
+# Or attach as a JSON stream
+dbwatch attach --output=json | jq 'select(.table=="orders")'
 
-# Stop daemon
-dbwatch daemon stop --name=default
+# Tail the daemon's own log file
+dbwatch daemon logs --follow
+
+# Stop it
+dbwatch daemon stop
 ```
 
-Available daemon commands:
+Multiple daemons can run side-by-side via `--name`:
 
-- `dbwatch daemon start [--name] [--detach] --db-url=...`
-- `dbwatch daemon stop [--name]`
-- `dbwatch daemon status [--name]`
-- `dbwatch daemon list`
-- `dbwatch daemon logs [--name] [--follow]`
+```bash
+dbwatch daemon start --name=myapp     --db-url=... --detach
+dbwatch daemon start --name=analytics --db-url=... --detach
+dbwatch daemon list
+dbwatch attach --name=myapp
+```
 
-Daemon runtime files:
+Runtime files (one set per `--name`):
 
 - Socket: `$XDG_RUNTIME_DIR/dbwatch/<name>.sock` (fallback `~/.dbwatch/<name>.sock`)
-- PID: `$XDG_RUNTIME_DIR/dbwatch/<name>.pid` (fallback `~/.dbwatch/<name>.pid`)
-- Log: `$XDG_RUNTIME_DIR/dbwatch/<name>.log` (fallback `~/.dbwatch/<name>.log`)
+- PID:    `$XDG_RUNTIME_DIR/dbwatch/<name>.pid` (fallback `~/.dbwatch/<name>.pid`)
+- Log:    `$XDG_RUNTIME_DIR/dbwatch/<name>.log` (fallback `~/.dbwatch/<name>.log`)
 
-You can override the runtime directory with `DBWATCH_SOCKET_DIR`.
+Override the runtime directory with `DBWATCH_SOCKET_DIR`. For Linux systemd or macOS launchd setup, see [`docs/dbwatch.service`](./docs/dbwatch.service) and [`docs/dbwatch.plist`](./docs/dbwatch.plist).
+
+> The daemon currently runs on Linux and macOS. The lifecycle helpers use POSIX signals (`syscall.Kill`), so full Windows support for `daemon start/stop` is not in this release — use `dbwatch tail` on Windows.
 
 ### Flags
+
+Used by `tail` and `daemon start`:
 
 | Flag | Env var | Default | Description |
 | --- | --- | --- | --- |
@@ -164,7 +173,20 @@ You can override the runtime directory with `DBWATCH_SOCKET_DIR`.
 | `--slot` | `DBWATCH_SLOT` | `dbwatch_slot` | Replication slot name |
 | `--buffer` | `DBWATCH_BUFFER` | `1000` | Event ring buffer size |
 | `--log-level` | `DBWATCH_LOG_LEVEL` | `warn` | Log level: debug, info, warn, error |
-| `--output` | — | `auto` | Output mode: auto, tui, json |
+
+Used by `tail` and `attach`:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--output` | `auto` | Output mode: `auto`, `tui`, `json` |
+
+Used by daemon / attach commands:
+
+| Flag | Default | Description | Commands |
+| --- | --- | --- | --- |
+| `--name` | `default` | Daemon instance name (drives socket / PID / log paths) | all `daemon`, `attach` |
+| `--detach` | `false` | Fork into the background after starting | `daemon start` |
+| `--follow` | `false` | Tail the log file instead of printing once | `daemon logs` |
 
 ### Connection URL format
 
@@ -246,12 +268,7 @@ postgres://user:pass@localhost:5432/db?sslmode=disable&replication=database
 
 ## Architecture
 
-See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for technical design details.
-
-## Service examples
-
-- Linux systemd example: [`docs/dbwatch.service`](./docs/dbwatch.service)
-- macOS launchd example: [`docs/dbwatch.plist`](./docs/dbwatch.plist)
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for technical design details, and [`CHANGELOG.md`](./CHANGELOG.md) for what shipped in each release.
 
 ## Development
 
@@ -265,11 +282,11 @@ make build
 # Run tests
 make test
 
-# Start test Postgres (Docker required)
+# Start test Postgres (Docker required, listens on localhost:5433)
 ./scripts/start-postgres.sh
 ```
 
-See [`PLAN.md`](./PLAN.md) for the development roadmap.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for branch strategy, commit conventions, and the release process.
 
 ## License
 

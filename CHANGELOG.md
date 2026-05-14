@@ -9,15 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Phase 5 — Daemon mode:** `dbwatch daemon {start,stop,status,list,logs}` and `dbwatch attach` are now available. The daemon keeps a single Listener+Store process alive and serves clients over a Unix domain socket with NDJSON envelopes (`hello`, `snapshot`, `event`, `stats`, `ping`).
-- **Core runner extraction:** shared `internal/core/runner.go` now wires Listener to Store for both `tail` and `daemon` modes.
-- **IPC transport package:** new `internal/ipc/` package with protocol, socket-path resolution, server/client implementation, and roundtrip tests.
-- **Daemon lifecycle helpers:** new `internal/daemon/` utilities for PID files, process stop logic, stale-file cleanup, and detached log truncation policy.
-- **Service templates:** added `docs/dbwatch.service` (systemd) and `docs/dbwatch.plist` (launchd).
+- **Daemon mode:** `dbwatch daemon {start,stop,status,list,logs}` and `dbwatch attach`. The daemon keeps a single Listener+Store process alive and serves clients over a Unix domain socket with NDJSON envelopes (`hello`, `snapshot`, `event`, `stats`, `pong`).
+- **Core runner extraction:** shared `internal/core/runner.go` wires the Listener into the Store for both `tail` and `daemon` modes — no duplication.
+- **IPC transport package** (`internal/ipc/`): protocol envelope, socket / PID / log path resolution (`ResolveSocketPath`, `ResolvePIDPath`, `ResolveLogPath`), server with periodic `stats` broadcasts (5s ticker), client exposing `Events()`, `Stats()`, `Errors()`, and `RequestStats(ctx)`. Includes roundtrip and path-resolution tests.
+- **Daemon lifecycle helpers** (`internal/daemon/`): PID file I/O, signal-based stop with SIGTERM → SIGKILL escalation after a timeout, stale-file cleanup, log truncation when the file exceeds a size cap.
+- **Detach support:** `--detach` forks via an internal `--daemon-child` flag, redirects stdio to the per-name log file, and returns to the shell immediately.
+- **Service templates:** `docs/dbwatch.service` (systemd) and `docs/dbwatch.plist` (launchd).
+- **Configuration:** `DBWATCH_SOCKET_DIR` env var to override the runtime directory; `--name` flag for multi-daemon hosts; `--follow` for `daemon logs`; local-only `--buffer` for `attach`.
+
+### Known limitations
+
+- Daemon lifecycle uses POSIX signals; `daemon start/stop` is Linux/macOS only. Windows users should keep using `dbwatch tail`.
+- The IPC `subscribe` envelope is a protocol placeholder — every attached client currently receives all events. Per-client table filtering will come later.
 
 ### Planned
 
-- **Phase 6 — Web UI:** optional HTTP + WebSocket dashboard via `dbwatch serve`. Embedded frontend, shares the same Store as CLI and daemon.
+- **Marker HTTP API:** `POST /marker` + `POST /log` over a small HTTP server that runs alongside the IPC server. Markers render as separator lines in the TUI feed, making it easy to delimit test runs or deploys.
 
 ## [0.1.0] — 2026-05-14
 
