@@ -7,30 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- **Marker HTTP API:** `POST /marker` + `POST /log` over a small HTTP server that runs alongside the IPC server. Markers render as separator lines in the TUI feed, making it easy to delimit test runs or deploys.
+
+## [0.2.0] — 2026-05-14
+
+Daemon mode. DBWatch can now run as a long-lived background process while one or more TUI / JSON clients attach and detach freely. `dbwatch tail` continues to work as a foreground all-in-one.
+
 ### Added
 
 - **Daemon mode:** `dbwatch daemon {start,stop,status,list,logs}` and `dbwatch attach`. The daemon keeps a single Listener+Store process alive and serves clients over a Unix domain socket with NDJSON envelopes (`hello`, `snapshot`, `event`, `stats`, `pong`).
 - **Core runner extraction:** shared `internal/core/runner.go` wires the Listener into the Store for both `tail` and `daemon` modes — no duplication.
-- **IPC transport package** (`internal/ipc/`): protocol envelope, socket / PID / log path resolution (`ResolveSocketPath`, `ResolvePIDPath`, `ResolveLogPath`), server with periodic `stats` broadcasts (5s ticker), client exposing `Events()`, `Stats()`, `Errors()`, and `RequestStats(ctx)`. Includes roundtrip and path-resolution tests.
+- **IPC transport package** (`internal/ipc/`): protocol envelope, socket / PID / log path resolution (`ResolveSocketPath`, `ResolvePIDPath`, `ResolveLogPath`), server with periodic `stats` broadcasts (5s ticker), client exposing `Events()`, `Stats()`, `Errors()`, `Dropped()`, and `RequestStats(ctx)`. Includes roundtrip and path-resolution tests.
 - **Daemon lifecycle helpers** (`internal/daemon/`): PID file I/O, signal-based stop with SIGTERM → SIGKILL escalation after a timeout, stale-file cleanup, log truncation when the file exceeds a size cap.
 - **Detach support:** `--detach` forks via an internal `--daemon-child` flag, redirects stdio to the per-name log file, and returns to the shell immediately.
 - **Service templates:** `docs/dbwatch.service` (systemd) and `docs/dbwatch.plist` (launchd).
 - **Configuration:** `DBWATCH_SOCKET_DIR` env var to override the runtime directory; `--name` flag for multi-daemon hosts; `--follow` for `daemon logs`; local-only `--buffer` for `attach`.
+- **IPC idle-client reaper.** The server applies a 60s read deadline that resets on every inbound `ping` / `subscribe`. Hung clients no longer occupy a Store subscription indefinitely.
+- **Observable IPC client drops.** When a slow `attach` consumer overflows the local 100-event channel, the client records the count (exposed via `Client.Dropped()`) and emits a rate-limited `Debug` log instead of silently swallowing the event.
+
+### Changed
+
+- **README** rewritten around a single coherent example database (`user=local`, `password=local`, `database=test`, `port=5432`), with a new "Adapting the connection URL" section that spells out every placeholder.
+- **ARCHITECTURE / CLAUDE** updated to reflect the shipped daemon mode rather than treating it as a "planned phase". Package import hierarchy in `CLAUDE.md` now covers `core/`, `ipc/`, and `daemon/`.
+- **CONTRIBUTING.md** added, covering branch strategy, commit conventions, PR rules, and the release process.
 
 ### Fixed
 
-- **IPC idle clients are now reaped.** The server applies a 60s read deadline that resets on every inbound `ping` / `subscribe`. Hung clients no longer occupy a Store subscription indefinitely.
-- **IPC client drops are observable.** When a slow `attach` consumer overflows the local 100-event channel, the client now records the count (exposed via `Client.Dropped()`) and emits a `Debug` log instead of silently swallowing the event.
 - **Windows cross-compilation.** `internal/daemon/` and `cmd/dbwatch/` split POSIX-specific bits (`syscall.Kill`, `Setsid`) into `_unix.go` files; Windows stubs return `daemon.ErrUnsupportedPlatform`. `go build` and `go vet` now succeed for `GOOS=windows`; the binary still refuses `daemon start --detach` on Windows with a clear message.
 
 ### Known limitations
 
-- Daemon process management (`daemon start --detach`, `daemon stop`) is Linux/macOS only. Windows builds compile cleanly but the daemon subcommands return `ErrUnsupportedPlatform`; use `dbwatch tail` on Windows.
-- The IPC `subscribe` envelope is a protocol placeholder — every attached client currently receives all events. Per-client table filtering will come later. The server now logs at Debug level when it ignores a subscribe filter.
-
-### Planned
-
-- **Marker HTTP API:** `POST /marker` + `POST /log` over a small HTTP server that runs alongside the IPC server. Markers render as separator lines in the TUI feed, making it easy to delimit test runs or deploys.
+- Daemon process management (`daemon start --detach`, `daemon stop`) is Linux / macOS only. Windows builds compile cleanly but the daemon subcommands return `ErrUnsupportedPlatform`; use `dbwatch tail` on Windows.
+- The IPC `subscribe` envelope is a protocol placeholder — every attached client currently receives all events. Per-client table filtering is deferred. The server logs at Debug level when it ignores a subscribe filter.
 
 ## [0.1.0] — 2026-05-14
 
@@ -70,5 +80,6 @@ First public release. MVP CLI that streams Postgres logical replication events t
 - No authentication or remote access. Intended for local development.
 - `TRUNCATE` events are currently ignored (definitive behavior TBD).
 
-[Unreleased]: https://github.com/rifqiagniamubarok/dbwatcher/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/rifqiagniamubarok/dbwatcher/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.2.0
 [0.1.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.1.0
