@@ -1,8 +1,17 @@
 /bin/
+/dist/
 /dbwatch
 *.test
 coverage.out
 .env
+.env.*
+
+# Internal planning docs
+PLAN.md
+IDEAS.md
+
+# OS
+.DS_Store
 
 # IDE
 .idea/
