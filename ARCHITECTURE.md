@@ -2,24 +2,26 @@
 
 ## Overview
 
-DBWatch adalah CLI tool untuk memantau perubahan database Postgres secara realtime. Tool ini ditujukan untuk **development environment**, bukan production observability. Filosofi utamanya: `tail -f` untuk Postgres.
+DBWatch is a CLI tool for monitoring Postgres database changes in realtime. It targets **development environments**, not production observability. Its core idea: `tail -f` for Postgres.
 
-Saat developer melakukan testing atau debugging, DBWatch menampilkan setiap INSERT, UPDATE, dan DELETE yang terjadi di database secara live di terminal, dengan diff view untuk UPDATE. Ini memberi developer (dan AI agent seperti Claude Code) visibilitas langsung terhadap side-effect dari kode yang sedang dikerjakan.
+While a developer tests or debugs, DBWatch shows every INSERT, UPDATE, and DELETE happening in the database live in the terminal, with a diff view for UPDATE. This gives developers (and AI agents like Claude Code) immediate visibility into the side effects of the code they're working on.
 
 ## Goals & non-goals
 
 ### Goals
-- Realtime: latency event dari Postgres ke terminal < 1 detik
-- Zero friction: developer cukup `docker run` atau `dbwatch tail`, langsung jalan
-- Minimal dependency: satu binary, embedded UI, tidak butuh service eksternal
-- Reusable core: Listener dan Store didesain agar bisa dipakai ulang untuk Web UI di phase berikutnya
+
+- Realtime: event latency from Postgres to terminal < 1 second
+- Zero friction: `docker run` or `dbwatch tail` and you're going
+- Minimal dependencies: one binary, embedded UI, no external service required
+- Reusable core: Listener and Store are designed so they can be reused for a Web UI in later phases
 
 ### Non-goals
-- Production audit trail (sudah ada Debezium, pgaudit, dll)
+
+- Production audit trail (Debezium, pgaudit, etc. already exist)
 - Persistent storage / long-term retention
 - Authentication, RBAC, multi-tenant
 - High availability, clustering
-- Multi-database support di MVP (Postgres only)
+- Multi-database support in the MVP (Postgres only)
 
 ## High-level architecture
 
@@ -59,67 +61,71 @@ Saat developer melakukan testing atau debugging, DBWatch menampilkan setiap INSE
                                     └──────────────────┘
 ```
 
-Semua komponen di dalam DBWatch binary hidup di satu proses, berkomunikasi via Go channels (in-memory). Tidak ada network call antar komponen, tidak ada serialisasi internal.
+All components inside the DBWatch binary live in one process and talk through Go channels (in-memory). There are no network calls between components and no internal serialization.
 
 ## Component breakdown
 
 ### Listener
 
-**Tanggung jawab:** Connect ke Postgres sebagai logical replication consumer, baca stream WAL, decode binary pgoutput menjadi struct `Event` yang bermakna.
+**Responsibility:** Connect to Postgres as a logical replication consumer, read the WAL stream, decode binary pgoutput into meaningful `Event` structs.
 
-**Cara kerja:**
-1. Saat startup, query `information_schema.columns` untuk semua table di public schema. Cache hasilnya di map per table OID.
-2. Buat replication slot temporary (auto-cleanup saat disconnect) atau pakai slot yang sudah ada.
-3. Mulai streaming dari LSN terakhir.
-4. Untuk setiap message pgoutput:
-   - `RelationMessage`: update schema cache jika belum ada
-   - `InsertMessage`, `UpdateMessage`, `DeleteMessage`: decode jadi `Event`, push ke Store
-   - `BeginMessage`, `CommitMessage`: track transaction context (untuk grouping di v0.2)
-5. Acknowledge LSN secara berkala agar Postgres tidak menumpuk WAL.
+**How it works:**
 
-**Dependency:** `github.com/jackc/pglogrepl`, `github.com/jackc/pgx/v5`.
+1. On startup, query `information_schema.columns` for every table in the public schema. Cache the result in a map keyed by table OID.
+2. Create a temporary replication slot (auto-cleaned on disconnect) or reuse an existing one.
+3. Start streaming from the latest LSN.
+4. For each pgoutput message:
+   - `RelationMessage`: update the schema cache if missing
+   - `InsertMessage`, `UpdateMessage`, `DeleteMessage`: decode into an `Event` and push to the Store
+   - `BeginMessage`, `CommitMessage`: track transaction context (for grouping in v0.2)
+5. Acknowledge the LSN periodically so Postgres doesn't accumulate WAL.
 
-**Edge case yang harus di-handle:**
-- TOAST values (kolom besar yang tidak ikut di-ship saat UPDATE jika tidak berubah) → tampilkan sebagai "[unchanged]"
-- Replica identity bukan FULL → old values tidak tersedia di UPDATE, tampilkan informasi seadanya dengan warning
-- Schema change saat runtime (ALTER TABLE) → refresh cache saat dapat RelationMessage baru
-- Koneksi putus → retry dengan exponential backoff
+**Dependencies:** `github.com/jackc/pglogrepl`, `github.com/jackc/pgx/v5`.
+
+**Edge cases that must be handled:**
+
+- TOAST values (large columns not shipped on UPDATE when unchanged) → render as "[unchanged]"
+- Replica identity not FULL → old values are unavailable on UPDATE; show what we have with a warning
+- Schema change at runtime (ALTER TABLE) → refresh the cache when a new RelationMessage arrives
+- Connection drop → retry with exponential backoff
 
 ### Store
 
-**Tanggung jawab:** Menyimpan event terbaru di memori dan mendistribusikan ke semua subscriber yang aktif.
+**Responsibility:** Keep recent events in memory and distribute them to every active subscriber.
 
-**Cara kerja:**
-1. Maintain slice circular dengan kapasitas tetap (default 1000). Event terlama otomatis ter-overwrite.
-2. Maintain list of subscriber channels. Saat ada event baru:
-   - Append ke ring buffer
-   - Broadcast ke semua subscriber channel (non-blocking, drop jika channel penuh)
-3. Expose method:
-   - `Push(event Event)` — dipanggil Listener
-   - `Subscribe() <-chan Event` — dipanggil Renderer
-   - `Unsubscribe(ch <-chan Event)` — saat subscriber selesai
-   - `Snapshot() []Event` — ambil semua event yang masih ada (untuk initial render)
+**How it works:**
 
-**Concurrency:** Pakai `sync.Mutex` untuk akses ke slice dan subscriber list. Bukan bottleneck karena volume event di dev environment rendah.
+1. Maintain a circular slice with a fixed capacity (default 1000). The oldest event is overwritten automatically.
+2. Maintain a list of subscriber channels. On a new event:
+   - Append to the ring buffer
+   - Broadcast to every subscriber channel (non-blocking, drop if a channel is full)
+3. Public API:
+   - `Push(event Event)` — called by the Listener
+   - `Subscribe() <-chan Event` — called by the Renderer
+   - `Unsubscribe(ch <-chan Event)` — when a subscriber is done
+   - `Snapshot() []Event` — all events still in the ring (for initial render)
 
-**Catatan desain:** Store sengaja tidak tahu apa-apa tentang format event maupun siapa yang subscribe. Ini yang bikin reusable saat Web UI ditambahkan — tinggal subscribe channel baru.
+**Concurrency:** `sync.Mutex` for slice and subscriber-list access. Not a bottleneck because event volume in a dev environment is low.
+
+**Design note:** The Store deliberately knows nothing about event formats or who is subscribing. That's what makes it reusable when the Web UI lands — just subscribe a new channel.
 
 ### Renderer (TUI)
 
-**Tanggung jawab:** Render UI di terminal, handle interaksi user, subscribe ke Store untuk update realtime.
+**Responsibility:** Render the UI in the terminal, handle user interaction, subscribe to the Store for realtime updates.
 
-**Arsitektur:** Mengikuti pola Elm/Bubble Tea — `Model`, `Update`, `View`.
+**Architecture:** Elm / Bubble Tea pattern — `Model`, `Update`, `View`.
 
 **State (Model):**
+
 ```go
 type Model struct {
-    events       []Event              // snapshot lokal dari Store
-    cursor       int                  // event yang sedang di-highlight
-    expanded     bool                 // detail view terbuka?
+    events       []Event              // local snapshot from the Store
+    cursor       int                  // currently highlighted event
+    expanded     bool                 // detail view open?
     paused       bool                 // freeze incoming events?
-    filter       map[string]bool      // table aktif (true = ditampilkan)
-    tables       []string             // semua table yang pernah muncul
-    focus        Focus                // FOCUS_FEED atau FOCUS_FILTER
+    filter       map[string]bool      // active tables (true = visible)
+    tables       []string             // every table seen so far
+    focus        Focus                // FOCUS_FEED or FOCUS_FILTER
     width, height int
 }
 ```
@@ -140,24 +146,26 @@ type Model struct {
 ```
 
 **Keybindings:**
-- `j` / `↓` — pindah ke event di bawah
-- `k` / `↑` — pindah ke event di atas
-- `enter` — toggle expand detail
-- `space` — pause / resume feed
-- `f` — toggle focus ke sidebar filter
-- `c` — clear feed
+
+- `j` / `↓` — move to the next event
+- `k` / `↑` — move to the previous event
+- `enter` — toggle detail expand
+- `space` — pause / resume the feed
+- `f` — toggle focus to the filter sidebar
+- `c` — clear the feed
 - `q` / `Ctrl+C` — quit
 
 **Color coding (lipgloss):**
-- INSERT: hijau
-- UPDATE: kuning
-- DELETE: merah
+
+- INSERT: green
+- UPDATE: yellow
+- DELETE: red
 - Table name: cyan, bold
 - Timestamp: gray, dim
-- Diff old value: merah/striked
-- Diff new value: hijau
+- Diff old value: red / strikethrough
+- Diff new value: green
 
-**Non-TTY mode:** Jika `stdout` bukan terminal (di-pipe ke `jq`, `grep`, atau file), Renderer tidak start TUI. Sebagai gantinya, print setiap event sebagai JSON line ke stdout. Ini membuat tool pipe-friendly:
+**Non-TTY mode:** If `stdout` is not a terminal (piped to `jq`, `grep`, or a file), the Renderer does not start the TUI. Instead, every event is printed as a JSON line to stdout. This makes the tool pipe-friendly:
 
 ```bash
 dbwatch tail --db-url=... | jq 'select(.table == "orders")'
@@ -178,15 +186,15 @@ const (
 
 type Event struct {
     ID        uint64            // sequence number, monotonically increasing
-    Timestamp time.Time         // saat event diterima
-    LSN       string            // Postgres LSN, untuk debugging
+    Timestamp time.Time         // when the event was received
+    LSN       string            // Postgres LSN, for debugging
     Type      EventType
-    Schema    string            // misal "public"
-    Table     string            // misal "orders"
-    Columns   []Column          // metadata kolom
-    NewValues map[string]any    // untuk INSERT dan UPDATE
-    OldValues map[string]any    // untuk UPDATE dan DELETE (jika REPLICA IDENTITY FULL)
-    TxID      uint32            // transaction ID, untuk grouping nanti
+    Schema    string            // e.g. "public"
+    Table     string            // e.g. "orders"
+    Columns   []Column          // column metadata
+    NewValues map[string]any    // for INSERT and UPDATE
+    OldValues map[string]any    // for UPDATE and DELETE (if REPLICA IDENTITY FULL)
+    TxID      uint32            // transaction ID, for later grouping
 }
 
 type Column struct {
@@ -198,11 +206,11 @@ type Column struct {
 
 ### Diff (computed at render time)
 
-Untuk event tipe UPDATE, Renderer membandingkan `OldValues` dan `NewValues` di runtime — tidak disimpan di Event. Ini menghemat memori dan fleksibel jika strategi diff berubah.
+For UPDATE events, the Renderer compares `OldValues` and `NewValues` at runtime — the diff is not stored on the Event. This saves memory and stays flexible if the diff strategy changes.
 
 ## Configuration
 
-Semua config via environment variable dan command-line flag. Flag override env var. Tidak ada config file untuk MVP.
+All config flows through environment variables and command-line flags. Flags override env vars. No config file in the MVP.
 
 | Setting | Env var | Flag | Default | Required |
 |---|---|---|---|---|
@@ -211,22 +219,24 @@ Semua config via environment variable dan command-line flag. Flag override env v
 | Replication slot | `DBWATCH_SLOT` | `--slot` | `dbwatch_slot` | no |
 | Buffer size | `DBWATCH_BUFFER` | `--buffer` | `1000` | no |
 | Log level | `DBWATCH_LOG_LEVEL` | `--log-level` | `warn` | no |
-| Output format | — | `--output` | `tui` (atau `json` jika non-TTY) | no |
+| Output format | — | `--output` | `tui` (or `json` if non-TTY) | no |
 
 ## Postgres setup requirements
 
-Tool ini butuh konfigurasi Postgres berikut. Akan didokumentasikan di README dengan jelas:
+The tool requires the following Postgres configuration. It is documented clearly in the README:
 
-1. `wal_level = logical` di `postgresql.conf` (butuh restart)
-2. `max_replication_slots >= 1` (default biasanya cukup)
-3. User dengan privilege `REPLICATION` dan `SELECT` di table yang ingin di-watch
-4. Publication mencakup table yang ingin di-watch:
+1. `wal_level = logical` in `postgresql.conf` (requires restart)
+2. `max_replication_slots >= 1` (the default is usually enough)
+3. A user with `REPLICATION` and `SELECT` privilege on the tables to watch
+4. A publication covering the tables to watch:
+
    ```sql
    CREATE PUBLICATION dbwatch_pub FOR ALL TABLES;
    ```
-5. (Opsional, untuk diff lengkap di UPDATE/DELETE) `ALTER TABLE foo REPLICA IDENTITY FULL;` per table
 
-Untuk dev environment dengan Postgres di Docker, contoh command:
+5. (Optional, for a full diff on UPDATE/DELETE) `ALTER TABLE foo REPLICA IDENTITY FULL;` per table
+
+For a dev environment with Postgres in Docker, an example command:
 ```bash
 docker run -d \
   -e POSTGRES_PASSWORD=test \
@@ -237,13 +247,13 @@ docker run -d \
 
 ## Distribution
 
-Tiga channel distribusi:
+Three distribution channels:
 
 1. **Single binary** via `go install github.com/<user>/dbwatch/cmd/dbwatch@latest`
 2. **Docker image** via `docker run -it ghcr.io/<user>/dbwatch tail --db-url=...`
-3. **GitHub Releases** dengan pre-built binary untuk Linux, macOS, Windows × amd64, arm64
+3. **GitHub Releases** with prebuilt binaries for Linux, macOS, Windows × amd64, arm64
 
-Semua di-build otomatis oleh GoReleaser yang ter-trigger dari git tag.
+Everything is built automatically by GoReleaser, triggered by a git tag.
 
 ## Folder structure
 
@@ -259,12 +269,12 @@ dbwatch/
 │   │   └── schema_cache.go      # column metadata cache
 │   ├── store/
 │   │   ├── store.go             # ring buffer + pub/sub
-│   │   └── event.go             # struct Event, Column
+│   │   └── event.go             # Event, Column structs
 │   ├── tui/
 │   │   ├── app.go               # Bubble Tea Model + Update
-│   │   ├── feed.go              # komponen list event
-│   │   ├── filter.go            # komponen sidebar filter
-│   │   ├── detail.go            # komponen detail/diff
+│   │   ├── feed.go              # event list component
+│   │   ├── filter.go            # sidebar filter component
+│   │   ├── detail.go            # detail / diff component
 │   │   └── styles.go            # lipgloss styles
 │   └── config/
 │       └── config.go            # parse env + flag
@@ -291,14 +301,98 @@ dbwatch/
 | Testing | stdlib `testing` + `stretchr/testify` | Standard combination |
 | Build & release | Makefile + GoReleaser | Auto multi-platform build + Docker + GitHub Release |
 
+## Daemon mode (Phase 5)
+
+Starting from Phase 5, DBWatch supports a daemon mode: a background process that runs the Listener and Store, plus TUI/JSON clients that attach over a Unix socket. The `tail` mode (all-in-one, foreground) remains the default and is unaffected.
+
+### Architecture
+
+```
+┌────────────────────────────────────────┐
+│  dbwatch daemon (background process)   │
+│                                        │
+│  Postgres ──▶ Listener ──▶ Store       │
+│                              │         │
+│                              ▼         │
+│                         IPC Server     │
+│                       (Unix socket)    │
+└──────────────┬─────────────────────────┘
+               │ NDJSON
+       ┌───────┼───────┬───────────┐
+       ▼       ▼       ▼           ▼
+   attach   attach   attach     dbwatch serve
+   (TUI)    (JSON)   (TUI #2)   (future Web UI)
+```
+
+Each client is just another subscriber on the same Store — no duplicate Listener, no extra Postgres connection. The daemon is the single source of truth; clients are lightweight views.
+
+### IPC layer
+
+New package `internal/ipc/`:
+
+- **Transport:** Unix domain socket at `$XDG_RUNTIME_DIR/dbwatch/<name>.sock` (fallback `~/.dbwatch/<name>.sock`), permission `0600`. Windows 10+ supports AF_UNIX, so cross-platform stays on one path.
+- **Wire format:** newline-delimited JSON. Each line is a message envelope:
+
+  ```json
+  {"type": "event",    "data": { /* Event */ }}
+  {"type": "snapshot", "data": [ /* Event[] */ ]}
+  {"type": "hello",    "data": {"version": "0.2.0", "uptime_s": 142}}
+  {"type": "stats",    "data": {"events": 4521, "clients": 2}}
+  {"type": "ping"}     {"type": "pong"}
+  ```
+
+- **Connection lifecycle:** the server sends `hello` + `snapshot` when a client connects, then streams `event` messages. Clients send `ping` periodically (15s) to keep the connection alive. The server closes the connection if it sees no ping for > 60s.
+- **Backpressure:** the Store already drops events for slow subscribers when their channel is full. The same applies to the IPC server — if a socket is slow (client hung), events are dropped for that client only.
+
+### Process model
+
+| Mode | Listener | Store | TUI | IPC Server | IPC Client |
+| --- | --- | --- | --- | --- | --- |
+| `tail` (default) | ✓ | ✓ | ✓ | — | — |
+| `daemon start` | ✓ | ✓ | — | ✓ | — |
+| `attach` | — | — | ✓ | — | ✓ |
+
+A small refactor is needed: extract a `runCore(ctx, cfg, store)` function that only starts the Listener. Then `tail` = runCore + local renderer; `daemon` = runCore + IPC server; `attach` = IPC client + local renderer.
+
+**The Listener and Store don't change at all.** Phase 5 only adds the `internal/ipc/` package and two new subcommands.
+
+### Folder structure additions
+
+```
+internal/
+├── ipc/
+│   ├── protocol.go        # message envelope, type constants
+│   ├── server.go          # accept connections, fan out from Store
+│   ├── client.go          # connect, expose <-chan Event
+│   └── socket_path.go     # resolve socket path from --name
+└── daemon/
+    ├── lifecycle.go       # PID file, detach, log redirection
+    └── status.go          # status / list helpers
+```
+
+### Configuration additions
+
+| Setting | Flag | Default | Used by |
+| --- | --- | --- | --- |
+| Daemon name | `--name` | `default` | `daemon start/stop/status`, `attach` |
+| Detach | `--detach` | `false` | `daemon start` |
+| Socket dir | `DBWATCH_SOCKET_DIR` (env) | `$XDG_RUNTIME_DIR/dbwatch` or `~/.dbwatch` | all daemon/attach commands |
+
+### Security model
+
+- Socket file `0600`, owned by the user who started the daemon — kernel-level access control via filesystem permissions
+- No protocol-layer auth (local-only); if an attacker can read the socket file, they already have access as the same user
+- No TCP listener — the daemon **never** binds to a network address. For remote access, use SSH port-forwarding, or `dbwatch serve` (Phase 6) which is explicitly network-facing
+
 ## Future extension points
 
-Arsitektur ini dirancang agar fitur di bawah bisa ditambahkan **tanpa mengubah Listener atau Store**:
+The architecture is designed so the features below can be added **without changing the Listener or the Store**:
 
-- **Web UI:** Tambah package `internal/server/` dengan HTTP + WebSocket. Subscribe ke Store yang sama.
-- **Session correlation:** Tambah field `ApplicationName` dan `Pid` di Event. Listener decode dari Postgres metadata.
-- **MCP server:** Tambah package `internal/mcp/` yang expose Store sebagai MCP resource untuk AI agent.
-- **Persistent storage:** Tambah subscriber baru di Store yang nulis ke SQLite. Tidak menggantikan ring buffer.
-- **Multi-database:** Refactor Listener jadi interface, implement `postgres_listener.go` dan `mysql_listener.go` terpisah.
+- **Daemon mode (Phase 5):** see the section above. Adds `internal/ipc/` and `internal/daemon/`.
+- **Web UI (Phase 6):** add `internal/server/` with HTTP + WebSocket. Can subscribe to the Store directly (standalone mode) or act as an IPC client to the daemon (shared mode).
+- **Session correlation:** add `ApplicationName` and `Pid` fields on Event. The Listener decodes them from Postgres metadata.
+- **MCP server:** add `internal/mcp/` that exposes the Store as an MCP resource for AI agents. Could also be implemented as an IPC client to the daemon.
+- **Persistent storage:** add a new subscriber to the Store that writes to SQLite. Does not replace the ring buffer.
+- **Multi-database:** refactor the Listener into an interface, implement `postgres_listener.go` and `mysql_listener.go` separately.
 
-Semua ekstensi di atas adalah **additive**. Inti aplikasi tidak perlu diubah.
+All of the above are **additive**. The core does not need to change.

@@ -1,132 +1,132 @@
 # CLAUDE.md
 
-Konteks untuk Claude Code saat bekerja di project ini. Baca file ini di awal setiap sesi sebelum mulai task apapun.
+Context for Claude Code when working on this project. Read this file at the start of every session before starting any task.
 
 ## Project context
 
-DBWatch adalah CLI tool untuk memantau perubahan Postgres database secara realtime di terminal. Target user: developer yang sedang testing/debugging. **Ini bukan production tool.**
+DBWatch is a CLI tool for monitoring Postgres database changes in realtime from the terminal. Target user: developers who are testing or debugging. **This is not a production tool.**
 
-Untuk konteks lengkap:
-- `ARCHITECTURE.md` — desain teknis, struktur folder, tech stack
-- `PLAN.md` — phase plan, task list, expected outcome
+For full context:
+- `ARCHITECTURE.md` — technical design, folder structure, tech stack
+- `PLAN.md` — phase plan, task list, expected outcome (local only, gitignored)
 
-Setiap sesi, tanyakan ke user: "Kita di phase berapa, task mana?" sebelum mulai coding.
+At the start of every session, ask the user: "Which phase and task are we on?" before writing any code.
 
 ## Working principles
 
 ### 1. One task at a time
-Jangan kerjakan multiple task sekaligus, walaupun kelihatannya gampang. Selesaikan satu task sampai expected outcome-nya tercapai, baru lanjut.
+Don't work on multiple tasks at once, even if they look simple. Finish one task until its expected outcome is met, then move on.
 
-### 2. Test-first untuk logic kritis
-Untuk komponen berikut, **tulis test dulu sebelum implementation**:
-- `internal/listener/decoder.go` — parser binary protocol, banyak edge case
+### 2. Test-first for critical logic
+For the following components, **write tests before implementation**:
+- `internal/listener/decoder.go` — binary protocol parser, many edge cases
 - `internal/listener/schema_cache.go` — cache invalidation
 - `internal/store/store.go` — concurrency, ring buffer, pub/sub
 
-Untuk UI (TUI components), test-first nggak wajib — iterasi visual lebih cepat.
+For UI (TUI components), test-first is not required — visual iteration is faster.
 
 ### 3. Small commits
-Commit setelah setiap task di PLAN.md selesai. Format pesan commit:
+Commit after each task in PLAN.md is done. Commit message format:
 ```
-phase-N: <ringkasan task>
+phase-N: <task summary>
 ```
-Contoh: `phase-1: implement schema cache`, `phase-1: add decoder unit tests`.
+Examples: `phase-1: implement schema cache`, `phase-1: add decoder unit tests`.
 
 ### 4. No premature abstraction
-Jangan bikin interface kalau cuma ada satu implementor. Tunggu sampai benar-benar butuh polymorphism (paling cepat saat Phase 5 atau saat multi-DB).
+Don't create an interface if there's only one implementor. Wait until you genuinely need polymorphism (earliest is Phase 6 or when multi-DB lands).
 
 ### 5. Don't expand scope
-Kalau di tengah jalan kepikiran fitur menarik yang nggak ada di PLAN.md, **catat di file `IDEAS.md`**, jangan langsung implement. Diskusikan dengan user dulu.
+If an interesting feature comes to mind mid-task and it isn't in PLAN.md, **write it down in `IDEAS.md`**, don't implement it directly. Discuss with the user first.
 
 ## Tech constraints
 
-- **Go version:** 1.22 atau lebih baru (untuk `slog`, generics matang)
-- **Dependencies:** minimal. Sebelum tambah dependency baru, justifikasi kenapa standard library nggak cukup.
+- **Go version:** 1.22 or newer (for `slog`, mature generics)
+- **Dependencies:** minimal. Before adding a new dependency, justify why the standard library is not enough.
 - **Approved dependencies:**
   - `github.com/jackc/pglogrepl` — logical replication
   - `github.com/jackc/pgx/v5` — Postgres driver
   - `github.com/spf13/cobra` — CLI parsing
   - `github.com/charmbracelet/bubbletea` — TUI
   - `github.com/charmbracelet/lipgloss` — styling
-  - `github.com/charmbracelet/bubbles` — komponen TUI
-  - `github.com/mattn/go-isatty` — deteksi TTY
-  - `github.com/stretchr/testify` — assertion helper di test
+  - `github.com/charmbracelet/bubbles` — TUI components
+  - `github.com/mattn/go-isatty` — TTY detection
+  - `github.com/stretchr/testify` — test assertion helper
 
-Selain di atas, tanya dulu sebelum `go get`.
+For anything else, ask before running `go get`.
 
 ## Code style
 
 ### Naming
-- Package: lowercase, singular (`listener`, bukan `listeners`)
-- Exported type/function: PascalCase
+- Package: lowercase, singular (`listener`, not `listeners`)
+- Exported type / function: PascalCase
 - Error variable: `ErrSomething`
-- Test function: `TestXxx`, table-driven test diberi nama `TestXxx_Scenario`
+- Test function: `TestXxx`, table-driven tests named `TestXxx_Scenario`
 
 ### Error handling
-- Bungkus error dengan konteks: `fmt.Errorf("decode insert message: %w", err)`
-- User-facing error (yang muncul di CLI) harus actionable. Lihat task 4.1 di PLAN.md untuk contoh format.
-- Internal error (di library code) cukup bungkus dengan konteks, jangan format ulang.
+- Wrap errors with context: `fmt.Errorf("decode insert message: %w", err)`
+- User-facing errors (shown on the CLI) must be actionable. See task 4.1 in PLAN.md for the format.
+- Internal errors (in library code) just need wrapping with context — don't reformat.
 
 ### Concurrency
-- Selalu jalankan `go test -race ./...` sebelum commit
-- Gunakan `context.Context` di setiap fungsi yang bisa block (network call, channel receive yang lama)
-- Goroutine harus punya exit path yang jelas. Tidak boleh ada goroutine yang nggak bisa di-stop.
-- Channel buffered untuk pub/sub (capacity 100 default), unbuffered untuk synchronization signal.
+- Always run `go test -race ./...` before committing
+- Use `context.Context` in every function that can block (network call, long channel receive)
+- Every goroutine must have a clear exit path. There must be no goroutine that cannot be stopped.
+- Buffered channels for pub/sub (capacity 100 default), unbuffered for synchronization signals.
 
 ### Logging
-- Pakai `log/slog` (stdlib)
+- Use `log/slog` (stdlib)
 - Level guidance:
-  - `Debug` — detail internal yang berguna saat investigasi (LSN, message type, dll)
-  - `Info` — milestone normal (connected, slot created, dll). **Hindari spam di hot path.**
-  - `Warn` — sesuatu nggak ideal tapi bisa lanjut (TOAST value, replica identity bukan FULL)
-  - `Error` — operasi gagal
-- Format log untuk user akhir (di CLI) **bukan** pakai slog — pakai output yang readable.
+  - `Debug` — internal detail useful during investigation (LSN, message type, etc.)
+  - `Info` — normal milestones (connected, slot created, etc.). **Avoid spam in hot paths.**
+  - `Warn` — something is not ideal but the program can continue (TOAST value, replica identity not FULL)
+  - `Error` — operation failed
+- End-user CLI output is **not** slog — use readable formatting.
 
 ## File organization
 
-Lihat `ARCHITECTURE.md` section "Folder structure" untuk layout lengkap.
+See `ARCHITECTURE.md` section "Folder structure" for the full layout.
 
-Rules tambahan:
-- `cmd/` cuma boleh berisi entry point dan wiring. Logic ada di `internal/`.
-- `internal/` package tidak boleh import package lain di `internal/` yang levelnya "lebih tinggi". Hirarki:
-  - `store` tidak import apa-apa dari internal
-  - `listener` boleh import `store`
-  - `tui` boleh import `store` (tidak import `listener` langsung)
-  - `config` standalone
-- Test file di package yang sama (`store_test.go` di package `store`), kecuali integration test yang butuh test database.
+Additional rules:
+- `cmd/` is for entry point and wiring only. Logic lives in `internal/`.
+- An `internal/` package must not import another `internal/` package that sits "higher" in the layer hierarchy:
+  - `store` imports nothing from internal
+  - `listener` may import `store`
+  - `tui` may import `store` (must not import `listener` directly)
+  - `config` is standalone
+- Test files live in the same package (`store_test.go` in package `store`), except integration tests that need a test database.
 
 ## Testing strategy
 
 ### Unit test
-- Setiap fungsi public di `internal/listener/decoder.go`, `schema_cache.go`, dan seluruh `internal/store/` wajib punya unit test
-- Pakai table-driven test untuk function yang banyak case
-- Mock minimal — kalau bisa pakai struct asli, pakai struct asli
+- Every public function in `internal/listener/decoder.go`, `schema_cache.go`, and all of `internal/store/` must have unit tests
+- Use table-driven tests for functions with many cases
+- Mock minimally — if you can use the real struct, use the real struct
 
 ### Integration test
-- Folder `internal/listener/integration_test.go` dengan build tag `//go:build integration`
-- Butuh Postgres running, di-skip di unit test biasa
-- Jalankan dengan: `go test -tags=integration ./...`
+- `internal/listener/integration_test.go` with build tag `//go:build integration`
+- Requires a running Postgres, skipped in normal unit-test runs
+- Run with: `go test -tags=integration ./...`
 
 ### Manual test
-- Setiap akhir phase, jalankan skenario di section "Expected Outcome" PLAN.md
-- Catat hasilnya di `TESTING.md` di section "Verified scenarios"
+- At the end of every phase, run the "Expected Outcome" scenario from PLAN.md
+- Record results in `TESTING.md` under "Verified scenarios"
 
 ## Anti-patterns to avoid
 
-1. **Goroutine leak.** Setiap `go func()` harus punya cara berhenti via context atau channel close.
-2. **Unbounded channel.** Channel `chan Event` di pub/sub harus buffered, dan handler harus drop kalau penuh.
-3. **Print di library code.** Library code di `internal/` jangan `fmt.Println`. Pakai slog atau return error.
-4. **Hardcoded value.** Capacity, timeout, retry — semua di config atau constant yang jelas.
-5. **Big bang refactor.** Kalau struktur perlu berubah, kerjakan bertahap. Bukan rewrite seluruh package.
+1. **Goroutine leak.** Every `go func()` must have a way to stop via context or channel close.
+2. **Unbounded channel.** Pub/sub `chan Event` must be buffered, and the handler must drop when full.
+3. **Print in library code.** Library code in `internal/` must not `fmt.Println`. Use slog or return an error.
+4. **Hardcoded value.** Capacity, timeout, retry — all in config or a clearly named constant.
+5. **Big bang refactor.** If the structure needs to change, do it incrementally. Don't rewrite an entire package at once.
 
 ## When stuck
 
-Kalau task terasa terlalu besar atau ambigu:
-1. Pecah jadi sub-task lebih kecil, tulis di chat dulu
-2. Tanya user: "Mau aku kerjakan A dulu atau B dulu?"
-3. Kalau ada keputusan desain yang nggak jelas di ARCHITECTURE.md, **tanya user, jangan asumsikan**
+If a task feels too large or ambiguous:
+1. Break it into smaller sub-tasks, write them in chat first
+2. Ask the user: "Should I work on A first, or B first?"
+3. If a design decision isn't clear from ARCHITECTURE.md, **ask the user, don't assume**
 
-Kalau test gagal dan susah debug:
-1. Tambah log Debug
-2. Reproduce dengan minimal example
-3. Kalau lebih dari 30 menit stuck, surface ke user dengan ringkasan apa yang udah dicoba
+If a test fails and is hard to debug:
+1. Add Debug logs
+2. Reproduce with a minimal example
+3. If you're stuck for more than 30 minutes, surface it to the user with a summary of what you've tried
