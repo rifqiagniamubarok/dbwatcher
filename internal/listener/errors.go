@@ -2,6 +2,7 @@ package listener
 
 import (
 	"errors"
+	"net/url"
 	"strings"
 )
 
@@ -66,6 +67,21 @@ func friendlyError(err error) error {
 	}
 
 	return err
+}
+
+// stripReplicationParam removes the replication=database query parameter from
+// a Postgres connection URL. That parameter is only valid for pgconn replication
+// connections; a regular pgx connection will reject it.
+func stripReplicationParam(dbURL string) string {
+	u, err := url.Parse(dbURL)
+	if err != nil {
+		// Not parseable — return as-is and let pgx report the real error.
+		return dbURL
+	}
+	q := u.Query()
+	q.Del("replication")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func isConnRefused(msg string) bool {

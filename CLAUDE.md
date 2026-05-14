@@ -8,7 +8,8 @@ DBWatch is a CLI tool for monitoring Postgres database changes in realtime from 
 
 For full context:
 - `ARCHITECTURE.md` — technical design, folder structure, tech stack
-- `PLAN.md` — phase plan, task list, expected outcome (local only, gitignored)
+- `CHANGELOG.md` — what has shipped (`[0.1.0]`) and what is in flight (`[Unreleased]`)
+- `PLAN.md` — phase plan, task list, expected outcome (local only, gitignored — exists on the user's machine, not the public repo)
 
 At the start of every session, ask the user: "Which phase and task are we on?" before writing any code.
 
@@ -33,7 +34,7 @@ phase-N: <task summary>
 Examples: `phase-1: implement schema cache`, `phase-1: add decoder unit tests`.
 
 ### 4. No premature abstraction
-Don't create an interface if there's only one implementor. Wait until you genuinely need polymorphism (earliest is Phase 6 or when multi-DB lands).
+Don't create an interface if there's only one implementor. Wait until you genuinely need polymorphism (e.g. when multi-DB or a second Listener implementation lands).
 
 ### 5. Don't expand scope
 If an interesting feature comes to mind mid-task and it isn't in PLAN.md, **write it down in `IDEAS.md`**, don't implement it directly. Discuss with the user first.
@@ -88,11 +89,14 @@ See `ARCHITECTURE.md` section "Folder structure" for the full layout.
 
 Additional rules:
 - `cmd/` is for entry point and wiring only. Logic lives in `internal/`.
-- An `internal/` package must not import another `internal/` package that sits "higher" in the layer hierarchy:
-  - `store` imports nothing from internal
-  - `listener` may import `store`
-  - `tui` may import `store` (must not import `listener` directly)
-  - `config` is standalone
+- An `internal/` package must not import another `internal/` package that sits "higher" in the layer hierarchy. Current layers (lowest first):
+  - `store` — imports nothing from `internal/`
+  - `config` — standalone
+  - `listener` — may import `store`
+  - `ipc` — may import `store` (transport for events)
+  - `daemon` — standalone (PID/lifecycle utilities only, no domain types)
+  - `core` — may import `store`, `listener`, `config` (orchestrates them)
+  - `tui` — may import `store` and `ipc` (must NOT import `listener` directly — go through `core` or `ipc`)
 - Test files live in the same package (`store_test.go` in package `store`), except integration tests that need a test database.
 
 ## Testing strategy

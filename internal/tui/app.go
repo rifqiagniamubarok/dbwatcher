@@ -55,9 +55,32 @@ type Model struct {
 
 // New creates the initial model.
 func New(dbTarget string) Model {
+	return NewWithEvents(dbTarget, nil)
+}
+
+// NewWithEvents creates a model preloaded with initial events.
+func NewWithEvents(dbTarget string, events []store.Event) Model {
+	active := make(map[string]bool)
+	tables := make([]string, 0)
+	all := make([]store.Event, 0, len(events))
+
+	for _, e := range events {
+		all = append(all, e)
+		tables = addTable(tables, e.Table)
+		active[e.Table] = true
+	}
+
+	cursor := 0
+	if len(all) > 0 {
+		cursor = len(all) - 1
+	}
+
 	return Model{
-		active:   make(map[string]bool),
-		dbTarget: dbTarget,
+		allEvents: all,
+		tables:    tables,
+		active:    active,
+		cursor:    cursor,
+		dbTarget:  dbTarget,
 	}
 }
 
