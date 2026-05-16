@@ -10,8 +10,9 @@ var (
 	colorCyan   = lipgloss.AdaptiveColor{Light: "#006b6b", Dark: "#5af0f0"}
 	colorOld    = lipgloss.AdaptiveColor{Light: "#8a1a1a", Dark: "#f07070"}
 	colorNew    = lipgloss.AdaptiveColor{Light: "#1a7a1a", Dark: "#5af078"}
-	colorBlue   = lipgloss.AdaptiveColor{Light: "#1a3a8a", Dark: "#7aa0ff"}
-	colorMarker = lipgloss.AdaptiveColor{Light: "#5a5a5a", Dark: "#a0a0a0"}
+	colorBlue    = lipgloss.AdaptiveColor{Light: "#1a3a8a", Dark: "#7aa0ff"}
+	colorMarker  = lipgloss.AdaptiveColor{Light: "#5a5a5a", Dark: "#a0a0a0"}
+	colorDDL     = lipgloss.AdaptiveColor{Light: "#7a1a8a", Dark: "#d080f0"}
 
 	styleHeader = lipgloss.NewStyle().
 			Bold(true).
@@ -43,6 +44,7 @@ var (
 
 	styleMarker = lipgloss.NewStyle().Foreground(colorMarker).Bold(true)
 	styleLog    = lipgloss.NewStyle().Foreground(colorBlue).Italic(true)
+	styleDDL    = lipgloss.NewStyle().Foreground(colorDDL).Bold(true)
 )
 
 // markerColorStyle returns the lipgloss style for a given marker color name.

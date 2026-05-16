@@ -150,6 +150,26 @@ Run the scenarios below after each phase is complete. Tick `[x]` once verified.
 - [ ] Marker server runs in `dbwatch tail` mode too (no daemon required)
 - [ ] A test runner that POSTs to a stopped DBWatch fails silently (the curl connect error doesn't break the suite)
 
+### Phase 7 — DDL tracking
+
+- [ ] Without `--track-ddl`, no event trigger is installed and behavior is unchanged from before (no regression)
+- [ ] `dbwatch ddl-tools print-sql` prints the install SQL
+- [ ] `dbwatch ddl-tools install` installs the trigger (as superuser); `status` then reports "installed"
+- [ ] `dbwatch ddl-tools install` as a non-superuser returns a friendly privilege error
+- [ ] `dbwatch ddl-tools uninstall` removes the trigger; `status` then reports "not installed"
+- [ ] `dbwatch ddl-tools install` run twice does not error (idempotent)
+- [ ] `tail --track-ddl` (auto mode, superuser) auto-installs the trigger and captures DDL
+- [ ] `CREATE TABLE` / `ALTER TABLE` / `CREATE INDEX` / `DROP TABLE` each produce a DDL event in the feed
+- [ ] `tail --track-ddl` without superuser prints an actionable message and continues with DML only (no crash)
+- [ ] DDL events render in the TUI with a distinct magenta `⚡ DDL` style
+- [ ] Expanding a DDL event shows command tag, object type, identity, timestamp
+- [ ] DDL events appear in attach (IPC) and JSON (pipe) output
+- [ ] DDL events pass through the table filter and don't appear in the sidebar table list
+- [ ] `--ddl-install-mode=none` skips installation and just LISTENs
+- [ ] `--ddl-install-mode=manual` does not install; reports the trigger is missing
+- [ ] The detached daemon child inherits `--track-ddl` / `--ddl-install-mode`
+- [ ] Integration test: `DBWATCH_TEST_DB_URL=... go test -tags=integration ./internal/ddlwatcher/...` passes
+
 ## Verified scenarios log
 
 Record the date and environment when manual tests pass. Format:

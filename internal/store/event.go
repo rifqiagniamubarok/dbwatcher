@@ -25,6 +25,7 @@ const (
 	KindEvent  Kind = "event"
 	KindMarker Kind = "marker"
 	KindLog    Kind = "log"
+	KindDDL    Kind = "ddl"
 )
 
 // Allowed marker colors (validated by the marker API).
@@ -78,6 +79,11 @@ type Event struct {
 
 	// Log fields (KindLog).
 	Message string `json:"message,omitempty"`
+
+	// DDL fields (KindDDL).
+	CommandTag     string `json:"command_tag,omitempty"`     // e.g. "ALTER TABLE", "CREATE INDEX"
+	ObjectType     string `json:"object_type,omitempty"`     // e.g. "table", "index", "column"
+	ObjectIdentity string `json:"object_identity,omitempty"` // e.g. "public.users", "public.users.phone"
 }
 
 // IsMarker reports whether this entry is a marker (separator line in the TUI).
@@ -85,6 +91,9 @@ func (e Event) IsMarker() bool { return e.Kind == KindMarker }
 
 // IsLog reports whether this entry is a free-form log line.
 func (e Event) IsLog() bool { return e.Kind == KindLog }
+
+// IsDDL reports whether this entry is a schema-change (DDL) event.
+func (e Event) IsDDL() bool { return e.Kind == KindDDL }
 
 // IsDBEvent reports whether this entry is a database change event.
 // Empty Kind is treated as a database event for backward compatibility.
@@ -112,6 +121,17 @@ func NewLog(message string) Event {
 	}
 }
 
+// NewDDL constructs a schema-change feed item.
+func NewDDL(commandTag, objectType, identity string) Event {
+	return Event{
+		Timestamp:      time.Now(),
+		Kind:           KindDDL,
+		CommandTag:     commandTag,
+		ObjectType:     objectType,
+		ObjectIdentity: identity,
+	}
+}
+
 func (e Event) JSON() (string, error) {
 	b, err := json.Marshal(e)
 	if err != nil {
@@ -126,6 +146,8 @@ func (e Event) String() string {
 		return fmt.Sprintf("[%s] MARKER %s", e.Timestamp.Format(timestampFormat), e.Label)
 	case KindLog:
 		return fmt.Sprintf("[%s] LOG %s", e.Timestamp.Format(timestampFormat), e.Message)
+	case KindDDL:
+		return fmt.Sprintf("[%s] DDL %s %s", e.Timestamp.Format(timestampFormat), e.CommandTag, e.ObjectIdentity)
 	default:
 		return fmt.Sprintf("[%s] %s %s.%s", e.Timestamp.Format(timestampFormat), e.Type, e.Schema, e.Table)
 	}
