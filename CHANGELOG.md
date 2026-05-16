@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
+## [0.3.0] — 2026-05-15
 
-- **Marker HTTP API:** `POST /marker` + `POST /log` over a small HTTP server that runs alongside the IPC server. Markers render as separator lines in the TUI feed, making it easy to delimit test runs or deploys.
+Marker HTTP API. External tools (test runners, deploy scripts, ad-hoc curl) can now push markers (separator lines) and log entries into the DBWatch feed over a tiny localhost HTTP API. Markers make the live feed read like a timeline instead of a firehose.
+
+### Added
+
+- **Marker HTTP API** (`internal/markerapi/`) — `POST /marker` (text or JSON, with an optional color), `POST /log` (free-form line), `GET /health` (status + uptime). Default bind `127.0.0.1:6677`. Body capped at 4 KiB, label / message capped at 200 chars, color validated against the allow-list (`default`, `yellow`, `green`, `red`, `blue`, `dim`).
+- **Auto-start in both modes.** `dbwatch tail` and `dbwatch daemon start` both bring up the marker server by default. The detached child inherits the parent's `--marker-*` flags so the port stays consistent across `start --detach`.
+- **TUI rendering for markers and logs.** Markers render as a separator line spanning the feed width (`──── label ────`) in the chosen color; log entries render inline with a `[log]` tag. Both bypass the table filter — they were pushed deliberately. Detail view (`enter`) shows label/color/timestamp for markers and message/timestamp for logs.
+- **New TUI keybindings.** `[` and `]` jump the cursor to the previous / next marker; `M` drops every item that arrived before the most recent marker (useful between test runs). Footer hint and `?` help overlay updated.
+- **Extended `Event` type.** New `Kind` discriminator (`event` default, `marker`, `log`) and optional `Label` / `Color` / `Message` fields. Backward compatible: a legacy `Event` JSON payload without `kind` decodes as a database event. Helper constructors `store.NewMarker(label, color)` and `store.NewLog(message)`.
+- **Flags:** `--marker-port` (default `6677`), `--marker-bind` (default `127.0.0.1`), `--no-marker`, all shared by `tail` and `daemon start`.
+
+### Documentation
+
+- README: new "Test Integration (Marker HTTP API)" section with curl, Go, Node.js (Jest), Python (pytest), and GitHub Actions examples. Keybindings table updated.
 
 ## [0.2.0] — 2026-05-14
 
@@ -80,6 +93,7 @@ First public release. MVP CLI that streams Postgres logical replication events t
 - No authentication or remote access. Intended for local development.
 - `TRUNCATE` events are currently ignored (definitive behavior TBD).
 
-[Unreleased]: https://github.com/rifqiagniamubarok/dbwatcher/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/rifqiagniamubarok/dbwatcher/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.3.0
 [0.2.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.2.0
 [0.1.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.1.0

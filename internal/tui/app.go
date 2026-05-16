@@ -66,8 +66,10 @@ func NewWithEvents(dbTarget string, events []store.Event) Model {
 
 	for _, e := range events {
 		all = append(all, e)
-		tables = addTable(tables, e.Table)
-		active[e.Table] = true
+		if e.IsDBEvent() && e.Table != "" {
+			tables = addTable(tables, e.Table)
+			active[e.Table] = true
+		}
 	}
 
 	cursor := 0
@@ -97,9 +99,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventMsg:
 		e := store.Event(msg)
-		m.tables = addTable(m.tables, e.Table)
-		if _, seen := m.active[e.Table]; !seen {
-			m.active[e.Table] = true
+		if e.IsDBEvent() && e.Table != "" {
+			m.tables = addTable(m.tables, e.Table)
+			if _, seen := m.active[e.Table]; !seen {
+				m.active[e.Table] = true
+			}
 		}
 
 		if m.paused {
@@ -190,6 +194,42 @@ func (m Model) updateFeed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.showHelp = true
+
+	case "[":
+		// Jump cursor to the previous marker in the visible feed.
+		for i := m.cursor - 1; i >= 0; i-- {
+			if visible[i].IsMarker() {
+				m.cursor = i
+				m.expanded = false
+				break
+			}
+		}
+
+	case "]":
+		// Jump cursor to the next marker in the visible feed.
+		for i := m.cursor + 1; i < len(visible); i++ {
+			if visible[i].IsMarker() {
+				m.cursor = i
+				m.expanded = false
+				break
+			}
+		}
+
+	case "M":
+		// Drop every item that arrived before the most-recent marker —
+		// useful for cleaning out noise between two test runs.
+		lastMarkerIdx := -1
+		for i := len(m.allEvents) - 1; i >= 0; i-- {
+			if m.allEvents[i].IsMarker() {
+				lastMarkerIdx = i
+				break
+			}
+		}
+		if lastMarkerIdx > 0 {
+			m.allEvents = append([]store.Event{}, m.allEvents[lastMarkerIdx:]...)
+			m.cursor = 0
+			m.expanded = false
+		}
 	}
 
 	return m, nil
@@ -320,7 +360,7 @@ func (m Model) headerView() string {
 }
 
 func (m Model) footerView() string {
-	hints := "space:pause  j/k:nav  enter:expand  f:filter  c:clear  q:quit"
+	hints := "space:pause  j/k:nav  [/]:marker  enter:expand  f:filter  c:clear  q:quit"
 	if m.focus == FocusFilter {
 		hints = "j/k:nav  space:toggle  f/esc:back  q:quit"
 	}
@@ -338,6 +378,9 @@ func (m Model) helpView() string {
     G           jump to newest
     enter       expand/collapse detail
     space       pause / resume
+    [           jump to previous marker
+    ]           jump to next marker
+    M           clear feed up to last marker
 
   Filter
     f           toggle filter sidebar focus

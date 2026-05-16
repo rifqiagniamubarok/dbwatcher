@@ -10,6 +10,13 @@ import (
 )
 
 func renderDetail(e store.Event, width int) string {
+	if e.IsMarker() {
+		return renderMarkerDetail(e)
+	}
+	if e.IsLog() {
+		return renderLogDetail(e)
+	}
+
 	var b strings.Builder
 
 	title := fmt.Sprintf("  %s %s (id=%v)",
@@ -29,6 +36,16 @@ func renderDetail(e store.Event, width int) string {
 	}
 
 	return b.String()
+}
+
+func renderMarkerDetail(e store.Event) string {
+	return fmt.Sprintf("    label: %s\n    color: %s\n    pushed: %s\n",
+		e.Label, e.Color, e.Timestamp.Format("15:04:05.000"))
+}
+
+func renderLogDetail(e store.Event) string {
+	return fmt.Sprintf("    message: %s\n    pushed:  %s\n",
+		e.Message, e.Timestamp.Format("15:04:05.000"))
 }
 
 func renderValues(b *strings.Builder, vals map[string]any, cols []store.Column, width int) {

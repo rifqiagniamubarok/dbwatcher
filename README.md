@@ -227,6 +227,89 @@ dbwatch tail --db-url=... | jq 'select(.table == "orders")'
 dbwatch tail --db-url=... --output=json > events.log
 ```
 
+## Test Integration (Marker HTTP API)
+
+DBWatch exposes a tiny HTTP API on `127.0.0.1:6677` (default) for pushing **markers** (separator lines) and **log lines** into the live feed. Use it to delimit test runs, deploys, or any other activity so the feed reads like a timeline instead of a firehose.
+
+The server runs alongside the daemon and inside `dbwatch tail`. It binds to loopback only and has no authentication — it is for local development workflows.
+
+```bash
+# Push a marker (text/plain body = label)
+curl -s -X POST localhost:6677/marker -d "TEST: create order"
+
+# Push a colored marker (JSON)
+curl -s -X POST -H "Content-Type: application/json" \
+  localhost:6677/marker -d '{"label":"deploy v1.2","color":"yellow"}'
+
+# Push a free-form log line (no separator)
+curl -s -X POST localhost:6677/log -d "migrations completed"
+
+# Health check
+curl -s localhost:6677/health
+# → {"status":"ok","uptime_s":42,"version":"v0.2.0"}
+```
+
+Allowed colors: `default`, `yellow`, `green`, `red`, `blue`, `dim`.
+
+Markers render as a separator across the TUI feed; log lines render inline with a `[log]` tag. In the TUI, press `[` / `]` to jump between markers and `M` to drop everything before the most recent marker.
+
+### Marker server flags
+
+| Flag | Default | Description | Commands |
+| --- | --- | --- | --- |
+| `--marker-port` | `6677` | TCP port to bind | `tail`, `daemon start` |
+| `--marker-bind` | `127.0.0.1` | Bind address | `tail`, `daemon start` |
+| `--no-marker` | `false` | Disable the HTTP server | `tail`, `daemon start` |
+
+### Language-specific examples
+
+**Go test helper:**
+
+```go
+func mark(label string) {
+    _, _ = http.Post("http://localhost:6677/marker",
+        "text/plain", strings.NewReader(label))
+}
+
+func TestCreateOrder(t *testing.T) {
+    mark("TEST: " + t.Name())
+    // ... test logic
+}
+```
+
+**Node.js (Jest):**
+
+```javascript
+beforeEach(() => {
+  fetch('http://localhost:6677/marker', {
+    method: 'POST',
+    body: expect.getState().currentTestName,
+  }).catch(() => {}); // fail silent
+});
+```
+
+**Python (pytest):**
+
+```python
+import requests
+
+def pytest_runtest_setup(item):
+    try:
+        requests.post('http://localhost:6677/marker',
+                      data=item.name, timeout=0.1)
+    except Exception:
+        pass  # fail silent
+```
+
+**GitHub Actions:**
+
+```yaml
+- name: Mark deploy
+  run: curl -s -X POST localhost:6677/marker -d "deploy: ${{ github.sha }}" || true
+```
+
+> **Fail-silent rule.** Always wrap the call so the test runner / CI does not fail if DBWatch isn't running. The whole point of markers is that they're a development convenience, not a hard dependency.
+
 ## Keybindings
 
 | Key | Action |
@@ -235,6 +318,9 @@ dbwatch tail --db-url=... --output=json > events.log
 | `k` / `↑` | Move cursor up |
 | `g` | Jump to oldest event |
 | `G` | Jump to newest event |
+| `[` | Jump to previous marker |
+| `]` | Jump to next marker |
+| `M` | Drop everything before the last marker |
 | `enter` | Expand / collapse event detail |
 | `space` | Pause / resume live feed |
 | `f` | Toggle filter sidebar focus |

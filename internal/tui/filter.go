@@ -74,12 +74,18 @@ func sidebarWidth(tables []string) int {
 }
 
 // filterEvents returns only events whose table is enabled.
+// Markers and log entries always pass through — they have no table and
+// the user pushed them deliberately to delimit activity in the feed.
 func filterEvents(events []store.Event, active map[string]bool) []store.Event {
 	if len(active) == 0 {
 		return events
 	}
 	out := make([]store.Event, 0, len(events))
 	for _, e := range events {
+		if !e.IsDBEvent() {
+			out = append(out, e)
+			continue
+		}
 		if active[e.Table] {
 			out = append(out, e)
 		}
