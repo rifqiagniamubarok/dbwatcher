@@ -34,6 +34,40 @@ func TestNewLog_PopulatesMessage(t *testing.T) {
 	assert.False(t, l.IsDBEvent())
 }
 
+func TestNewDDL_PopulatesFields(t *testing.T) {
+	d := NewDDL("ALTER TABLE", "table", "public.users")
+	assert.Equal(t, KindDDL, d.Kind)
+	assert.Equal(t, "ALTER TABLE", d.CommandTag)
+	assert.Equal(t, "table", d.ObjectType)
+	assert.Equal(t, "public.users", d.ObjectIdentity)
+	assert.False(t, d.Timestamp.IsZero())
+	assert.True(t, d.IsDDL())
+	assert.False(t, d.IsDBEvent())
+	assert.False(t, d.IsMarker())
+	assert.False(t, d.IsLog())
+}
+
+func TestEvent_String_DDL(t *testing.T) {
+	s := NewDDL("CREATE INDEX", "index", "public.idx_users_phone").String()
+	assert.Contains(t, s, "DDL")
+	assert.Contains(t, s, "CREATE INDEX")
+	assert.Contains(t, s, "public.idx_users_phone")
+}
+
+func TestEvent_JSON_DDL_OmitsIrrelevantFields(t *testing.T) {
+	d := NewDDL("DROP TABLE", "table", "public.old_table")
+	raw, err := d.JSON()
+	require.NoError(t, err)
+	assert.Contains(t, raw, `"kind":"ddl"`)
+	assert.Contains(t, raw, `"command_tag":"DROP TABLE"`)
+	assert.Contains(t, raw, `"object_type":"table"`)
+	assert.Contains(t, raw, `"object_identity":"public.old_table"`)
+	// DDL events carry no data-change fields.
+	assert.NotContains(t, raw, `"new_values"`)
+	assert.NotContains(t, raw, `"label"`)
+	assert.NotContains(t, raw, `"message"`)
+}
+
 func TestEvent_IsDBEvent_BackwardCompatible(t *testing.T) {
 	// An Event built before the Kind field existed has Kind="" and must
 	// still be classified as a database event.

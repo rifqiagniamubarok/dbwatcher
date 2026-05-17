@@ -57,6 +57,7 @@ func main() {
 	rootCmd.AddCommand(tailCmd())
 	rootCmd.AddCommand(attachCmd())
 	rootCmd.AddCommand(daemonCmd())
+	rootCmd.AddCommand(ddlToolsCmd())
 	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
@@ -79,6 +80,7 @@ func tailCmd() *cobra.Command {
 	cmd.Flags().Int("buffer", config.DefaultBufferSize, "Event ring buffer size")
 	cmd.Flags().String("output", "auto", "Output mode: auto, tui, json")
 	addMarkerFlags(cmd)
+	addDDLFlags(cmd)
 
 	return cmd
 }
@@ -89,6 +91,13 @@ func addMarkerFlags(cmd *cobra.Command) {
 	cmd.Flags().Int(flagMarkerPort, markerapi.DefaultPort, "Marker HTTP API port (set 0 for ephemeral)")
 	cmd.Flags().String(flagMarkerBind, markerapi.DefaultBind, "Marker HTTP API bind address")
 	cmd.Flags().Bool(flagNoMarker, false, "Disable the marker HTTP API")
+}
+
+// addDDLFlags registers the DDL-tracking flags on cmd.
+// Shared by `tail` and `daemon start`.
+func addDDLFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("track-ddl", false, "Track schema changes (DDL) — requires superuser to install the event trigger")
+	cmd.Flags().String("ddl-install-mode", config.DDLInstallAuto, "DDL trigger install: auto, manual, none")
 }
 
 // startMarkerAPI starts the marker HTTP server in a goroutine, unless
@@ -117,6 +126,21 @@ func startMarkerAPI(ctx context.Context, cmd *cobra.Command, st *store.Store, st
 	return errCh, true
 }
 
+// setupDDLWarn routes core's DDL-setup warning into the Store as a log entry,
+// so it surfaces uniformly in the TUI, attach, and JSON modes without
+// corrupting the Bubble Tea alt-screen. The full multi-line hint also goes to
+// stderr when not in TUI mode (visible before the program exits / when piped).
+func setupDDLWarn(st *store.Store, useTUI bool) {
+	core.DDLWarn = func(message string) {
+		st.Push(store.NewLog("DDL tracking disabled — see logs for details"))
+		if !useTUI {
+			fmt.Fprintln(os.Stderr, message)
+		} else {
+			slog.Warn("ddl tracking disabled", "detail", message)
+		}
+	}
+}
+
 func runTail(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load(cmd)
 	if err != nil {
@@ -133,6 +157,7 @@ func runTail(cmd *cobra.Command, args []string) error {
 
 	st := store.New(cfg.BufferSize)
 	var lastLSN atomic.Value
+	setupDDLWarn(st, useTUI)
 
 	sourceErr := make(chan error, 1)
 	go func() {
@@ -371,6 +396,7 @@ func daemonStartCmd() *cobra.Command {
 	cmd.Flags().Bool(flagDaemonChild, false, "Internal: daemon detached child process")
 	_ = cmd.Flags().MarkHidden(flagDaemonChild)
 	addMarkerFlags(cmd)
+	addDDLFlags(cmd)
 
 	return cmd
 }
@@ -461,6 +487,7 @@ func runDaemonForeground(cmd *cobra.Command, cfg *config.Config, name, pidPath, 
 	st := store.New(cfg.BufferSize)
 	var lastLSN atomic.Value
 	startedAt := time.Now()
+	setupDDLWarn(st, false) // daemon has no TUI; warning goes to the log file
 
 	coreErr := make(chan error, 1)
 	go func() {
@@ -746,6 +773,14 @@ func startDetachedDaemon(cmd *cobra.Command, name string, cfg *config.Config, lo
 		args = append(args,
 			"--"+flagMarkerPort, strconv.Itoa(port),
 			"--"+flagMarkerBind, bind,
+		)
+	}
+
+	// Forward DDL-tracking flags so the detached child tracks DDL too.
+	if cfg.TrackDDL {
+		args = append(args,
+			"--track-ddl",
+			"--ddl-install-mode", cfg.DDLInstallMode,
 		)
 	}
 

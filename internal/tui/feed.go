@@ -7,6 +7,9 @@ import (
 	"github.com/rifqiagniamubarok/dbwatcher/internal/store"
 )
 
+// tsLayout is the timestamp format used across all feed line renderers.
+const tsLayout = "15:04:05.000"
+
 func renderFeed(events []store.Event, cursor int, expanded bool, width int) string {
 	if len(events) == 0 {
 		return styleDim.Render("  Waiting for events...")
@@ -35,8 +38,10 @@ func formatFeedLine(e store.Event, width int) string {
 		return formatMarkerLine(e, width)
 	case e.IsLog():
 		return formatLogLine(e)
+	case e.IsDDL():
+		return formatDDLLine(e)
 	}
-	ts := styleTimestamp.Render(e.Timestamp.Format("15:04:05.000"))
+	ts := styleTimestamp.Render(e.Timestamp.Format(tsLayout))
 	typStr := eventTypeStyle(e.Type).Render(fmt.Sprintf("%-6s", string(e.Type)))
 	table := styleTableName.Render(e.Table)
 	summary := formatSummary(e)
@@ -71,9 +76,19 @@ func formatMarkerLine(e store.Event, width int) string {
 //
 //	14:32:05.123  [log]  Starting test suite
 func formatLogLine(e store.Event) string {
-	ts := styleTimestamp.Render(e.Timestamp.Format("15:04:05.000"))
+	ts := styleTimestamp.Render(e.Timestamp.Format(tsLayout))
 	tag := styleLog.Render("[log]")
 	return fmt.Sprintf("  %s  %s  %s", ts, tag, e.Message)
+}
+
+// formatDDLLine renders a schema-change event in a distinct (magenta) color:
+//
+//	14:33:10.456  ⚡ DDL   ALTER TABLE   public.users
+func formatDDLLine(e store.Event) string {
+	ts := styleTimestamp.Render(e.Timestamp.Format(tsLayout))
+	tag := styleDDL.Render(fmt.Sprintf("%-6s", "⚡ DDL"))
+	cmd := styleDDL.Render(fmt.Sprintf("%-13s", e.CommandTag))
+	return fmt.Sprintf("  %s  %s  %s  %s", ts, tag, cmd, styleTableName.Render(e.ObjectIdentity))
 }
 
 func formatSummary(e store.Event) string {

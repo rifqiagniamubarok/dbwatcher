@@ -16,6 +16,9 @@ func renderDetail(e store.Event, width int) string {
 	if e.IsLog() {
 		return renderLogDetail(e)
 	}
+	if e.IsDDL() {
+		return renderDDLDetail(e)
+	}
 
 	var b strings.Builder
 
@@ -40,12 +43,17 @@ func renderDetail(e store.Event, width int) string {
 
 func renderMarkerDetail(e store.Event) string {
 	return fmt.Sprintf("    label: %s\n    color: %s\n    pushed: %s\n",
-		e.Label, e.Color, e.Timestamp.Format("15:04:05.000"))
+		e.Label, e.Color, e.Timestamp.Format(tsLayout))
 }
 
 func renderLogDetail(e store.Event) string {
 	return fmt.Sprintf("    message: %s\n    pushed:  %s\n",
-		e.Message, e.Timestamp.Format("15:04:05.000"))
+		e.Message, e.Timestamp.Format(tsLayout))
+}
+
+func renderDDLDetail(e store.Event) string {
+	return fmt.Sprintf("    command:  %s\n    object:   %s\n    identity: %s\n    at:       %s\n",
+		e.CommandTag, e.ObjectType, e.ObjectIdentity, e.Timestamp.Format(tsLayout))
 }
 
 func renderValues(b *strings.Builder, vals map[string]any, cols []store.Column, width int) {

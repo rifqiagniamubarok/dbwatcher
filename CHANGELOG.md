@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-16
+
+DDL tracking. With `--track-ddl`, DBWatch captures schema changes (CREATE / ALTER / DROP of tables, columns, indexes) alongside the usual data events. Opt-in, because installing the Postgres event trigger needs superuser.
+
+### Added
+
+- **DDL tracking** (`internal/ddlwatcher/`) — installs two Postgres event triggers (`ddl_command_end` + `sql_drop`) that `pg_notify` a dedicated channel; a separate regular connection LISTENs and pushes schema-change events into the Store. Enabled with `--track-ddl`.
+- **`Event.Kind = "ddl"`** with `CommandTag`, `ObjectType`, `ObjectIdentity` fields, plus the `store.NewDDL()` constructor. JSON output stays backward compatible.
+- **`--ddl-install-mode`** flag (`auto` / `manual` / `none`) — `auto` installs the trigger if missing, `manual` prints the SQL instead, `none` assumes it already exists. Shared by `tail` and `daemon start`.
+- **`dbwatch ddl-tools` subcommands** — `print-sql`, `install`, `uninstall`, `status`. Supports the split-privilege workflow where a DBA installs the trigger once and developers run with a normal account.
+- **TUI rendering for DDL events** — distinct magenta color with a `⚡ DDL` tag; the expanded detail view shows command tag, object type, identity, and timestamp. DDL events bypass the table filter and don't pollute the sidebar table list.
+- **Graceful degradation** — when the user lacks superuser privilege, DBWatch prints an actionable message (how to install the trigger via a DBA, or switch to `--ddl-install-mode=none`) and continues with DML tracking only. It never crashes.
+- The detached daemon child inherits `--track-ddl` / `--ddl-install-mode`.
+
+### Fixed
+
+- DDL listener read `SHOW server_version_num` (text) into an `int`, which failed the scan; it now parses the string explicitly.
+
+### Notes
+
+- The event trigger is intentionally left installed on exit. Installs are idempotent, and uninstall-on-every-exit would churn DDL and break under a hard kill. Use `dbwatch ddl-tools uninstall` for explicit cleanup. (This drops the originally planned `--ddl-keep-on-exit` flag.)
+
+### Documentation
+
+- README: new "Tracking schema changes (DDL)" section with the install-mode table, split-privilege workflow, and `ddl-tools` reference.
+
 ## [0.3.0] — 2026-05-15
 
 Marker HTTP API. External tools (test runners, deploy scripts, ad-hoc curl) can now push markers (separator lines) and log entries into the DBWatch feed over a tiny localhost HTTP API. Markers make the live feed read like a timeline instead of a firehose.
@@ -93,7 +119,8 @@ First public release. MVP CLI that streams Postgres logical replication events t
 - No authentication or remote access. Intended for local development.
 - `TRUNCATE` events are currently ignored (definitive behavior TBD).
 
-[Unreleased]: https://github.com/rifqiagniamubarok/dbwatcher/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/rifqiagniamubarok/dbwatcher/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.4.0
 [0.3.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.3.0
 [0.2.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.2.0
 [0.1.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.1.0

@@ -14,6 +14,13 @@ const (
 	DefaultLogLevel    = "warn"
 )
 
+// DDL install mode values.
+const (
+	DDLInstallAuto   = "auto"   // install the event trigger if missing
+	DDLInstallManual = "manual" // do not install; tell the user the SQL if missing
+	DDLInstallNone   = "none"   // assume the trigger exists; just LISTEN
+)
+
 // Config holds all runtime configuration for dbwatch.
 type Config struct {
 	DBURL       string
@@ -21,6 +28,10 @@ type Config struct {
 	Slot        string
 	BufferSize  int
 	LogLevel    string
+
+	// DDL tracking (Phase 7, opt-in).
+	TrackDDL       bool
+	DDLInstallMode string
 }
 
 // Load reads config from environment variables, then overrides with flags if set.
@@ -47,6 +58,24 @@ func Load(cmd *cobra.Command) (*Config, error) {
 	}
 	if cmd.Flags().Changed("buffer") {
 		cfg.BufferSize, _ = cmd.Flags().GetInt("buffer")
+	}
+
+	cfg.DDLInstallMode = DDLInstallAuto
+	if cmd.Flags().Lookup("track-ddl") != nil {
+		cfg.TrackDDL, _ = cmd.Flags().GetBool("track-ddl")
+	}
+	if cmd.Flags().Lookup("ddl-install-mode") != nil {
+		if mode, _ := cmd.Flags().GetString("ddl-install-mode"); mode != "" {
+			cfg.DDLInstallMode = mode
+		}
+	}
+	switch cfg.DDLInstallMode {
+	case DDLInstallAuto, DDLInstallManual, DDLInstallNone:
+		// valid
+	default:
+		return nil, fmt.Errorf(
+			"invalid --ddl-install-mode %q (expected: auto, manual, none)", cfg.DDLInstallMode,
+		)
 	}
 
 	if cfg.DBURL == "" {

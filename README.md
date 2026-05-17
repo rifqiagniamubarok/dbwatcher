@@ -261,6 +261,13 @@ Markers render as a separator across the TUI feed; log lines render inline with 
 | `--marker-bind` | `127.0.0.1` | Bind address | `tail`, `daemon start` |
 | `--no-marker` | `false` | Disable the HTTP server | `tail`, `daemon start` |
 
+### DDL tracking flags
+
+| Flag | Default | Description | Commands |
+| --- | --- | --- | --- |
+| `--track-ddl` | `false` | Track schema changes (DDL) | `tail`, `daemon start` |
+| `--ddl-install-mode` | `auto` | Trigger install: `auto`, `manual`, `none` | `tail`, `daemon start` |
+
 ### Language-specific examples
 
 **Go test helper:**
@@ -309,6 +316,55 @@ def pytest_runtest_setup(item):
 ```
 
 > **Fail-silent rule.** Always wrap the call so the test runner / CI does not fail if DBWatch isn't running. The whole point of markers is that they're a development convenience, not a hard dependency.
+
+## Tracking schema changes (DDL)
+
+By default DBWatch tracks only data changes (INSERT / UPDATE / DELETE). Pass `--track-ddl` to also capture schema changes — `CREATE TABLE`, `ALTER TABLE`, `CREATE INDEX`, `DROP TABLE`, and so on. DDL events appear in the feed in a distinct magenta color with a `⚡ DDL` tag.
+
+```bash
+dbwatch tail --db-url=... --track-ddl
+```
+
+**What is tracked:** CREATE / ALTER / DROP of tables, columns, indexes, schemas, and other DDL objects.
+
+**What is *not* tracked:** DML (that's the default feed), permission changes (`GRANT` / `REVOKE`), and the bodies of functions / procedures.
+
+### How it works
+
+DDL tracking installs two Postgres **event triggers** that `pg_notify` a dedicated channel; DBWatch LISTENs on a separate regular connection. This needs **superuser privilege** to install the triggers (event triggers always do, in every Postgres version).
+
+`--ddl-install-mode` controls how the trigger gets there:
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` (default) | DBWatch installs the trigger automatically if it is missing |
+| `manual` | DBWatch does not install; it tells you the SQL to run if the trigger is missing |
+| `none` | Assume the trigger already exists; just LISTEN |
+
+If you lack superuser privilege, DBWatch prints an actionable message and **continues with DML tracking only** — it never crashes.
+
+### Split-privilege workflow
+
+A DBA installs the trigger once; developers then run with a normal account:
+
+```bash
+# DBA, once (needs superuser)
+dbwatch ddl-tools install --db-url=postgres://admin:...@host/db
+
+# Developer, daily (normal account)
+dbwatch tail --db-url=postgres://dev:...@host/db --track-ddl --ddl-install-mode=none
+```
+
+### `ddl-tools` subcommands
+
+| Command | Purpose |
+| --- | --- |
+| `dbwatch ddl-tools print-sql` | Print the install SQL (pipe to `psql`) |
+| `dbwatch ddl-tools install --db-url=...` | Install the event trigger (needs superuser) |
+| `dbwatch ddl-tools uninstall --db-url=...` | Remove the event trigger |
+| `dbwatch ddl-tools status --db-url=...` | Report whether the trigger is installed |
+
+> The event trigger is left installed when DBWatch exits — installs are idempotent, and removing it on every exit would churn DDL and break on a hard kill. Use `dbwatch ddl-tools uninstall` for explicit cleanup.
 
 ## Keybindings
 
