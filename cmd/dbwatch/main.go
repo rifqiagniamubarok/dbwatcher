@@ -58,6 +58,7 @@ func main() {
 	rootCmd.AddCommand(attachCmd())
 	rootCmd.AddCommand(daemonCmd())
 	rootCmd.AddCommand(ddlToolsCmd())
+	rootCmd.AddCommand(snapshotCmd())
 	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {

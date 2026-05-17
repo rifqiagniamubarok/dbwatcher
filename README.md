@@ -366,6 +366,67 @@ dbwatch tail --db-url=postgres://dev:...@host/db --track-ddl --ddl-install-mode=
 
 > The event trigger is left installed when DBWatch exits — installs are idempotent, and removing it on every exit would churn DDL and break on a hard kill. Use `dbwatch ddl-tools uninstall` for explicit cleanup.
 
+## Snapshot & Compare (migration safety)
+
+DBWatch can capture the **schema and per-table statistics** of a database at a point in time, then compare two captures to show exactly what a migration changed — including data drift the migration script doesn't mention.
+
+This is a deliberate, on-demand action via the `dbwatch snapshot` subcommand. It does not need a daemon running.
+
+```bash
+# Before a migration — capture a baseline
+dbwatch snapshot take --db-url=... --label=pre-migration
+
+# Run your migration
+npx prisma migrate deploy
+
+# Compare the baseline against the database now
+dbwatch snapshot compare pre-migration --db-url=...
+```
+
+Example output:
+
+```text
+SCHEMA CHANGES
+ ⚠ modified public.users.phone           NULL → NOT NULL
+
+DATA CHANGES
+  public.users:
+    rows:           100 → 100
+    phone non-null:  97 → 100  ⚠
+    phone null:       3 → 0
+
+SUMMARY
+  1 schema change(s), 1 breaking
+  1 table(s) with data drift, 1 notable
+```
+
+The `⚠` flags **breaking** schema changes (column/table removed, `NULL → NOT NULL`, type change) and **notable** data drift (e.g. NULLs that silently disappeared — a sign rows were backfilled).
+
+### What a snapshot captures
+
+- **Schema:** every table in the `public` schema — columns (type, nullable, default, position) and index names.
+- **Statistics:** per table — row count; per column — non-null count, null count, distinct count, min/max.
+
+Snapshots never store row contents — only schema metadata and aggregate counts. Each snapshot is roughly 5–50 KB.
+
+### `snapshot` subcommands
+
+| Command | Purpose |
+| --- | --- |
+| `dbwatch snapshot take --db-url=... --label=NAME` | Capture and store a snapshot |
+| `dbwatch snapshot list` | List stored snapshots |
+| `dbwatch snapshot show <label>` | Show a snapshot's schema and stats |
+| `dbwatch snapshot compare <from> [to]` | Compare two snapshots; omit `to` to compare against the live database |
+| `dbwatch snapshot delete <label>` | Delete a snapshot |
+
+`compare` accepts `--format=text|json|markdown` — `markdown` is handy for pasting into a PR description.
+
+### Storage and safeguards
+
+- Snapshots are stored in a local SQLite file at `~/.dbwatch/data.db` (override with `--data-dir` or `DBWATCH_DATA_DIR`).
+- `--snapshot-tables=a,b` restricts capture to specific tables; `--snapshot-exclude=audit_log` skips noisy ones. Compare snapshots captured with the **same** table filter — otherwise excluded tables show up as spurious "added/removed".
+- Tables over 10M rows capture only a row count (a full `COUNT(DISTINCT)` scan would be too costly). `--snapshot-timeout` caps per-table statistics time (default 30s); a slow table is recorded as "skipped" rather than failing the whole snapshot.
+
 ## Keybindings
 
 | Key | Action |

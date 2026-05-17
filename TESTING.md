@@ -170,6 +170,27 @@ Run the scenarios below after each phase is complete. Tick `[x]` once verified.
 - [ ] The detached daemon child inherits `--track-ddl` / `--ddl-install-mode`
 - [ ] Integration test: `DBWATCH_TEST_DB_URL=... go test -tags=integration ./internal/ddlwatcher/...` passes
 
+### Phase 8 — Snapshot & Compare
+
+- [ ] `dbwatch snapshot take --db-url=... --label=X` captures and stores a snapshot
+- [ ] `dbwatch snapshot list` shows stored snapshots, newest first
+- [ ] `dbwatch snapshot show X` prints schema + row counts
+- [ ] Re-taking with the same label replaces (does not duplicate) the snapshot
+- [ ] `dbwatch snapshot compare A B` diffs two stored snapshots
+- [ ] `dbwatch snapshot compare A` (no second arg) diffs against the live database
+- [ ] Adding a column shows up as an `added` schema change
+- [ ] Removing a column / table is flagged as `breaking` (⚠)
+- [ ] `NULL → NOT NULL` and a type change are flagged as `breaking`
+- [ ] A column whose NULLs disappeared is flagged as `notable` data drift
+- [ ] `--format=json` and `--format=markdown` produce valid output
+- [ ] `dbwatch snapshot delete X` removes the snapshot; deleting again reports not-found
+- [ ] `--snapshot-tables` / `--snapshot-exclude` restrict the captured tables
+- [ ] `--snapshot-tables` and `--snapshot-exclude` together are rejected
+- [ ] Snapshots persist across runs (stored in `~/.dbwatch/data.db`)
+- [ ] `--data-dir` / `DBWATCH_DATA_DIR` override the storage location
+- [ ] A snapshot of a database with ~100k rows completes in well under 5 seconds
+- [ ] Integration test: `DBWATCH_TEST_DB_URL=... go test -tags=integration ./internal/snapshot/...` passes
+
 ## Verified scenarios log
 
 Record the date and environment when manual tests pass. Format:

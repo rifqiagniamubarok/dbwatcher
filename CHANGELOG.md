@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-17
+
+Snapshot & Compare. Capture the schema and per-table statistics of a database, then compare two captures to review exactly what a migration changed — including data drift the migration script never mentions.
+
+### Added
+
+- **Snapshot capture** (`internal/snapshot/`) — `Capturer` records every `public`-schema table's columns (type, nullable, default, position), indexes, row count, and per-column statistics (non-null / null / distinct counts, min/max). Row contents are never stored.
+- **Snapshot compare** — `Compare()` diffs two snapshots into a `CompareReport`: schema changes (table/column added / removed / modified) and per-table data drift. Breaking changes (table/column removed, `NULL → NOT NULL`, type change) and notable data drift (NULLs that disappeared) are flagged.
+- **Report rendering** (`report.go`) — `FormatReport()` emits `text`, `json`, or `markdown`. Markdown is suited to pasting into a PR description.
+- **SQLite storage** (`internal/storage/`) — snapshots persist in `~/.dbwatch/data.db` via `modernc.org/sqlite` (pure-Go, no CGo — the binary stays statically linked). Save / load / list / delete, label-unique with upsert-on-conflict.
+- **`dbwatch snapshot` subcommand** — `take`, `list`, `show`, `compare`, `delete`. Standalone CLI workflow; no daemon required. `compare <from>` with no `to` argument compares a stored snapshot against the live database.
+- **Safeguards** — per-table statistics timeout (`--snapshot-timeout`, default 30s); tables over 10M rows capture only a row count; `--snapshot-tables` / `--snapshot-exclude` table filters; a slow or failing table is recorded as "skipped" rather than aborting the whole snapshot.
+- **New dependency:** `modernc.org/sqlite` (pure-Go SQLite driver).
+
+### Documentation
+
+- README: new "Snapshot & Compare (migration safety)" section with the workflow, subcommand reference, and storage/safeguard notes.
+
+### Notes
+
+- Scope: this release ships the capture/compare core and the `dbwatch snapshot` CLI. HTTP endpoints on the marker API server and TUI snapshot modals are deferred to a follow-up.
+
 ## [0.4.0] — 2026-05-16
 
 DDL tracking. With `--track-ddl`, DBWatch captures schema changes (CREATE / ALTER / DROP of tables, columns, indexes) alongside the usual data events. Opt-in, because installing the Postgres event trigger needs superuser.
@@ -119,7 +141,8 @@ First public release. MVP CLI that streams Postgres logical replication events t
 - No authentication or remote access. Intended for local development.
 - `TRUNCATE` events are currently ignored (definitive behavior TBD).
 
-[Unreleased]: https://github.com/rifqiagniamubarok/dbwatcher/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rifqiagniamubarok/dbwatcher/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.5.0
 [0.4.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.4.0
 [0.3.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.3.0
 [0.2.0]: https://github.com/rifqiagniamubarok/dbwatcher/releases/tag/v0.2.0
